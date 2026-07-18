@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <me.timschneeberger.rootlessjamesdsp.preference.SwitchPreferenceGroup
+        android:key="@string/key_auto_loudness_enable"
+        android:title="@string/car_audio_auto_loudness"
+        android:summary="@string/car_audio_auto_loudness_summary"
+        android:defaultValue="false"
+        android:icon="@drawable/ic_twotone_volume_up_24dp"
+        app:iconSpaceReserved="false">
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_auto_loudness_bass_max"
+            android:title="@string/car_audio_loudness_bass"
+            android:defaultValue="6"
+            app:minValue="0"
+            app:maxValue="9"
+            app:unit="dB"
+            app:precision="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_auto_loudness_treble_max"
+            android:title="@string/car_audio_loudness_treble"
+            android:defaultValue="3"
+            app:minValue="0"
+            app:maxValue="6"
+            app:unit="dB"
+            app:precision="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_auto_loudness_low_threshold"
+            android:title="@string/car_audio_loudness_low_threshold"
+            android:defaultValue="-30"
+            app:minValue="-60"
+            app:maxValue="-10"
+            app:unit="dB"
+            app:precision="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_auto_loudness_mid_threshold"
+            android:title="@string/car_audio_loudness_mid_threshold"
+            android:defaultValue="-18"
+            app:minValue="-50"
+            app:maxValue="-5"
+            app:unit="dB"
+            app:precision="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_auto_loudness_high_threshold"
+            android:title="@string/car_audio_loudness_high_threshold"
+            android:defaultValue="-6"
+            app:minValue="-30"
+            app:maxValue="0"
+            app:unit="dB"
+            app:precision="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+    </me.timschneeberger.rootlessjamesdsp.preference.SwitchPreferenceGroup>
+</PreferenceScreen>

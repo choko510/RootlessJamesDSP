@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <me.timschneeberger.rootlessjamesdsp.preference.SwitchPreferenceGroup
+        android:key="@string/key_car_spatializer_enable"
+        android:title="@string/car_audio_spatializer"
+        android:summary="@string/car_audio_spatializer_summary"
+        android:defaultValue="false"
+        android:icon="@drawable/ic_baseline_equalizer_24dp"
+        app:iconSpaceReserved="false">
+        <ListPreference
+            android:key="@string/key_car_spatializer_mode"
+            android:title="@string/car_audio_spatializer_mode"
+            android:defaultValue="1"
+            android:entries="@array/car_audio_spatializer_modes"
+            android:entryValues="@array/car_audio_spatializer_mode_values"
+            app:useSimpleSummaryProvider="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_car_spatializer_strength"
+            android:title="@string/car_audio_spatializer_strength"
+            android:defaultValue="35"
+            app:minValue="0"
+            app:maxValue="100"
+            app:unit="%"
+            app:precision="0"
+            app:seekBarIncrement="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_car_spatializer_front_focus"
+            android:title="@string/car_audio_spatializer_front_focus"
+            android:defaultValue="70"
+            app:minValue="0"
+            app:maxValue="100"
+            app:unit="%"
+            app:precision="0"
+            app:seekBarIncrement="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+        <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
+            android:key="@string/key_car_spatializer_envelopment"
+            android:title="@string/car_audio_spatializer_envelopment"
+            android:defaultValue="20"
+            app:minValue="0"
+            app:maxValue="100"
+            app:unit="%"
+            app:precision="0"
+            app:seekBarIncrement="1"
+            app:updatesContinuously="true"
+            app:showSeekBarValue="true"
+            app:iconSpaceReserved="false" />
+    </me.timschneeberger.rootlessjamesdsp.preference.SwitchPreferenceGroup>
+</PreferenceScreen>

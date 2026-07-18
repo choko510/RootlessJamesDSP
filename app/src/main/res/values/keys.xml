@@ -86,6 +86,43 @@
     <string name="key_profile_active" translatable="false">profile_active</string> <!-- static -->
 
     <!-- DSP -->
+    <string name="key_auto_loudness_enable" translatable="false">auto_loudness_enable</string>
+    <string name="key_auto_loudness_bass_max" translatable="false">auto_loudness_bass_max</string>
+    <string name="key_auto_loudness_treble_max" translatable="false">auto_loudness_treble_max</string>
+    <string name="key_auto_loudness_low_threshold" translatable="false">auto_loudness_low_threshold</string>
+    <string name="key_auto_loudness_mid_threshold" translatable="false">auto_loudness_mid_threshold</string>
+    <string name="key_auto_loudness_high_threshold" translatable="false">auto_loudness_high_threshold</string>
+
+    <string name="key_three_band_enable" translatable="false">three_band_enable</string>
+    <string name="key_three_band_preset" translatable="false">three_band_preset</string>
+    <string name="key_three_band_low_threshold" translatable="false">three_band_low_threshold</string>
+    <string name="key_three_band_low_ratio" translatable="false">three_band_low_ratio</string>
+    <string name="key_three_band_low_makeup" translatable="false">three_band_low_makeup</string>
+    <string name="key_three_band_low_attack" translatable="false">three_band_low_attack</string>
+    <string name="key_three_band_low_release" translatable="false">three_band_low_release</string>
+    <string name="key_three_band_mid_threshold" translatable="false">three_band_mid_threshold</string>
+    <string name="key_three_band_mid_ratio" translatable="false">three_band_mid_ratio</string>
+    <string name="key_three_band_mid_makeup" translatable="false">three_band_mid_makeup</string>
+    <string name="key_three_band_mid_attack" translatable="false">three_band_mid_attack</string>
+    <string name="key_three_band_mid_release" translatable="false">three_band_mid_release</string>
+    <string name="key_three_band_high_threshold" translatable="false">three_band_high_threshold</string>
+    <string name="key_three_band_high_ratio" translatable="false">three_band_high_ratio</string>
+    <string name="key_three_band_high_makeup" translatable="false">three_band_high_makeup</string>
+    <string name="key_three_band_high_attack" translatable="false">three_band_high_attack</string>
+    <string name="key_three_band_high_release" translatable="false">three_band_high_release</string>
+    <string name="key_three_band_attack" translatable="false">three_band_attack</string>
+    <string name="key_three_band_release" translatable="false">three_band_release</string>
+    <string name="key_three_band_gain_reduction_meter" translatable="false">three_band_gain_reduction_meter</string>
+    <string name="key_three_band_low_gain_reduction_meter" translatable="false">three_band_low_gain_reduction_meter</string>
+    <string name="key_three_band_mid_gain_reduction_meter" translatable="false">three_band_mid_gain_reduction_meter</string>
+    <string name="key_three_band_high_gain_reduction_meter" translatable="false">three_band_high_gain_reduction_meter</string>
+
+    <string name="key_car_spatializer_enable" translatable="false">car_spatializer_enable</string>
+    <string name="key_car_spatializer_mode" translatable="false">car_spatializer_mode</string>
+    <string name="key_car_spatializer_strength" translatable="false">car_spatializer_strength</string>
+    <string name="key_car_spatializer_front_focus" translatable="false">car_spatializer_front_focus</string>
+    <string name="key_car_spatializer_envelopment" translatable="false">car_spatializer_envelopment</string>
+
     <string name="key_compander_enable" translatable="false">compander_enable</string>
     <string name="key_compander_timeconstant" translatable="false">compander_timeconstant</string>
     <string name="key_compander_granularity" translatable="false">compander_granularity</string>

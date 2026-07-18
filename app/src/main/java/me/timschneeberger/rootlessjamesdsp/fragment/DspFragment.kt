@@ -13,6 +13,7 @@ import androidx.fragment.app.Fragment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import me.timschneeberger.rootlessjamesdsp.BuildConfig
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.databinding.FragmentDspBinding
 import me.timschneeberger.rootlessjamesdsp.utils.Constants
@@ -70,7 +71,11 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
         transition.enableTransitionType(LayoutTransition.CHANGING)
         binding.cardContainer.layoutTransition = transition
 
-        childFragmentManager.beginTransaction()
+        val carAudioUiEnabled = BuildConfig.ROOTLESS && !BuildConfig.PLUGIN
+        listOf(binding.cardAutoLoudness, binding.cardThreeBand, binding.cardCarSpatializer)
+            .forEach { (it.parent as? ViewGroup)?.isVisible = carAudioUiEnabled }
+
+        val transaction = childFragmentManager.beginTransaction()
             .replace(R.id.card_device_profiles, DeviceProfilesCardFragment.newInstance())
             .replace(
                 R.id.card_output_control, PreferenceGroupFragment.newInstance(Constants.PREF_OUTPUT,
@@ -124,7 +129,23 @@ class DspFragment : Fragment(), SharedPreferences.OnSharedPreferenceChangeListen
                 R.id.card_reverb, PreferenceGroupFragment.newInstance(Constants.PREF_REVERB,
                     R.xml.dsp_reverb_preferences
                 ))
-            .commit()
+
+        if (carAudioUiEnabled) {
+            transaction
+                .replace(
+                    R.id.card_auto_loudness, PreferenceGroupFragment.newInstance(Constants.PREF_AUTO_LOUDNESS,
+                        R.xml.dsp_auto_loudness_preferences
+                    ))
+                .replace(
+                    R.id.card_three_band, PreferenceGroupFragment.newInstance(Constants.PREF_THREE_BAND_COMPRESSOR,
+                        R.xml.dsp_three_band_preferences
+                    ))
+                .replace(
+                    R.id.card_car_spatializer, PreferenceGroupFragment.newInstance(Constants.PREF_CAR_SPATIALIZER,
+                        R.xml.dsp_car_spatializer_preferences
+                    ))
+        }
+        transaction.commit()
 
         // Load initial preferences
         arrayOf(R.string.key_device_profiles_enable).forEach {

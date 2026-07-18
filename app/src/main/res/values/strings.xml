@@ -75,6 +75,57 @@
     <!-- Main screen -->
     <string name="power_button_alt">Toggle audio processing</string>
 
+    <!-- Car audio enhancements -->
+    <string name="car_audio_auto_loudness">Automatic loudness</string>
+    <string name="car_audio_auto_loudness_summary">Volume-linked bass and treble compensation for quiet listening</string>
+    <string name="car_audio_loudness_bass">Maximum bass lift</string>
+    <string name="car_audio_loudness_treble">Maximum treble lift</string>
+    <string name="car_audio_loudness_low_threshold">Quiet-volume point</string>
+    <string name="car_audio_loudness_mid_threshold">Mid-volume point</string>
+    <string name="car_audio_loudness_high_threshold">Loud-volume point</string>
+    <string name="car_audio_three_band">Three-band compressor</string>
+    <string name="car_audio_three_band_summary">Controls low, mid and high energy independently. Warning: stacking with the existing compander can reduce dynamics.</string>
+    <string name="car_audio_compressor_preset">Strength</string>
+    <string name="car_audio_compressor_gentle">Gentle</string>
+    <string name="car_audio_compressor_normal">Normal</string>
+    <string name="car_audio_compressor_strong">Strong</string>
+    <string name="car_audio_low_threshold">Low band threshold (20–120 Hz)</string>
+    <string name="car_audio_low_ratio">Low band ratio</string>
+    <string name="car_audio_low_makeup">Low band makeup gain</string>
+    <string name="car_audio_low_attack">Low band attack</string>
+    <string name="car_audio_low_release">Low band release</string>
+    <string name="car_audio_mid_threshold">Mid band threshold (120 Hz–2 kHz)</string>
+    <string name="car_audio_mid_ratio">Mid band ratio</string>
+    <string name="car_audio_mid_makeup">Mid band makeup gain</string>
+    <string name="car_audio_mid_attack">Mid band attack</string>
+    <string name="car_audio_mid_release">Mid band release</string>
+    <string name="car_audio_high_threshold">High band threshold (&gt;2 kHz)</string>
+    <string name="car_audio_high_ratio">High band ratio</string>
+    <string name="car_audio_high_makeup">High band makeup gain</string>
+    <string name="car_audio_high_attack">High band attack</string>
+    <string name="car_audio_high_release">High band release</string>
+    <string name="car_audio_attack">Attack</string>
+    <string name="car_audio_release">Release</string>
+    <string name="car_audio_gain_reduction">Gain reduction</string>
+    <string name="car_audio_gain_reduction_idle">Audio meter is shown while Rootless processing is active</string>
+    <string name="car_audio_gain_reduction_value">Current maximum: %1$.1f dB</string>
+    <string name="car_audio_low_gain_reduction">Low GR: %1$.1f dB</string>
+    <string name="car_audio_mid_gain_reduction">Mid GR: %1$.1f dB</string>
+    <string name="car_audio_high_gain_reduction">High GR: %1$.1f dB</string>
+    <string name="car_audio_low_gain_reduction_title">Low gain reduction</string>
+    <string name="car_audio_mid_gain_reduction_title">Mid gain reduction</string>
+    <string name="car_audio_high_gain_reduction_title">High gain reduction</string>
+    <string name="car_audio_spatializer">Car spatializer</string>
+    <string name="car_audio_spatializer_summary">Forward stage and cabin envelopment for stereo music</string>
+    <string name="car_audio_spatializer_mode">Mode</string>
+    <string name="car_audio_spatializer_off">Off</string>
+    <string name="car_audio_spatializer_natural">Natural</string>
+    <string name="car_audio_spatializer_wide">Wide</string>
+    <string name="car_audio_spatializer_immersive">Immersive</string>
+    <string name="car_audio_spatializer_strength">Strength</string>
+    <string name="car_audio_spatializer_front_focus">Front focus</string>
+    <string name="car_audio_spatializer_envelopment">Envelopment</string>
+
     <string name="compander_enable">Dynamic range compander</string>
     <string name="compander_timeconstant">Time constant</string>
     <string name="compander_granularity">Granularity</string>

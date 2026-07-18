@@ -30,6 +30,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import me.timschneeberger.rootlessjamesdsp.BuildConfig
 import me.timschneeberger.rootlessjamesdsp.R
+import me.timschneeberger.rootlessjamesdsp.audio.CarAudioProcessor
+import me.timschneeberger.rootlessjamesdsp.audio.CarAudioSettings
+import me.timschneeberger.rootlessjamesdsp.audio.CarAudioSettingsLoader
 import me.timschneeberger.rootlessjamesdsp.flavor.CrashlyticsImpl
 import me.timschneeberger.rootlessjamesdsp.interop.JamesDspLocalEngine
 import me.timschneeberger.rootlessjamesdsp.interop.ProcessorMessageHandler
@@ -79,6 +82,45 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     private var recreateRecorderRequested = false
     private var recorderThread: Thread? = null
     private lateinit var engine: JamesDspLocalEngine
+    @Volatile
+    private var carAudioProcessor: CarAudioProcessor? = null
+    @Volatile
+    private var carAudioSettings = CarAudioSettings()
+    @Volatile
+    private var carAudioTrack: AudioTrack? = null
+    // Polled from the main thread so the realtime PCM loop only updates a volatile float.
+    private val carAudioMeterHandler = Handler(Looper.getMainLooper())
+    private val carAudioMeterPoller = object : Runnable {
+        private var lastVolumeUpdateNanos = 0L
+
+        override fun run() {
+            if (isServiceDisposing) return
+            val processor = carAudioProcessor
+            if (processor != null) {
+                // AudioManager volume APIs cross into the framework through Binder. Keep that
+                // work on the main/control thread; the PCM thread only reads the volatile gain.
+                val nowNanos = System.nanoTime()
+                if (nowNanos - lastVolumeUpdateNanos >= VOLUME_UPDATE_INTERVAL_NANOS) {
+                    processor.setEffectiveOutputGainDb(
+                        determineEffectiveOutputGainDb(carAudioTrack, carAudioSettings.outputPostGainDb)
+                    )
+                    lastVolumeUpdateNanos = nowNanos
+                }
+                if (carAudioSettings.compressor.enabled) {
+                    sendLocalBroadcast(Intent(Constants.ACTION_CAR_AUDIO_METER).apply {
+                        putExtra(
+                            Constants.EXTRA_CAR_AUDIO_GAIN_REDUCTION_DB,
+                            processor.getGainReductionDb(),
+                        )
+                        putExtra(Constants.EXTRA_CAR_AUDIO_LOW_GAIN_REDUCTION_DB, processor.getLowGainReductionDb())
+                        putExtra(Constants.EXTRA_CAR_AUDIO_MID_GAIN_REDUCTION_DB, processor.getMidGainReductionDb())
+                        putExtra(Constants.EXTRA_CAR_AUDIO_HIGH_GAIN_REDUCTION_DB, processor.getHighGainReductionDb())
+                    })
+                }
+            }
+            carAudioMeterHandler.postDelayed(this, CAR_AUDIO_METER_INTERVAL_MS)
+        }
+    }
     private val isRunning: Boolean
         get() = recorderThread != null
 
@@ -130,6 +172,9 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         // Setup core engine
         engine = JamesDspLocalEngine(this, ProcessorMessageHandler())
         engine.syncWithPreferences()
+        // Read DSP settings on the service/control thread. The realtime loop only consumes this
+        // immutable snapshot and never touches SharedPreferences.
+        carAudioSettings = CarAudioSettingsLoader.load(this)
 
         // Setup general-purpose broadcast receiver
         val filter = IntentFilter()
@@ -152,6 +197,8 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
 
         // No need to recreate in this stage
         recreateRecorderRequested = false
+
+        carAudioMeterHandler.post(carAudioMeterPoller)
 
         // Launch foreground service
         startForeground(
@@ -219,6 +266,7 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
 
     override fun onDestroy() {
         isServiceDisposing = true
+        carAudioMeterHandler.removeCallbacks(carAudioMeterPoller)
 
         // Stop recording and release engine
         stopRecording()
@@ -284,7 +332,12 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 ACTION_SAMPLE_RATE_UPDATED -> engine.syncWithPreferences(arrayOf(Constants.PREF_CONVOLVER))
-                ACTION_PREFERENCES_UPDATED -> engine.syncWithPreferences()
+                ACTION_PREFERENCES_UPDATED -> {
+                    engine.syncWithPreferences()
+                    val updated = CarAudioSettingsLoader.load(this@RootlessAudioProcessorService)
+                    carAudioSettings = updated
+                    carAudioProcessor?.update(updated)
+                }
                 ACTION_SERVICE_RELOAD_LIVEPROG -> engine.syncWithPreferences(arrayOf(Constants.PREF_LIVEPROG))
                 ACTION_SERVICE_HARD_REBOOT_CORE -> restartRecording()
                 ACTION_SERVICE_SOFT_REBOOT_CORE -> requestAudioRecordRecreation()
@@ -451,20 +504,34 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
             return
         }
 
-        if(engine.sampleRate.toInt() != sampleRate) {
+        if(engine.sampleRate.toInt() != sampleRate || engine.streamBufferSamples != bufferSize) {
             Timber.d("Sampling rate changed to ${sampleRate}Hz")
-            engine.sampleRate = sampleRate.toFloat()
+            engine.configureStream(sampleRate.toFloat(), bufferSize, 2)
         }
+
+        val localSettings = CarAudioSettingsLoader.load(this)
+        carAudioSettings = localSettings
+        val localCarProcessor = CarAudioProcessor(sampleRate).also {
+            it.update(localSettings)
+            it.prepare(bufferSize)
+        }
+        carAudioProcessor = localCarProcessor
+        carAudioTrack = track
+
+        // Allocate all PCM and conversion buffers before entering the realtime thread. This
+        // includes the PCM16 conversion scratch used by CarAudioProcessor.
+        val floatBuffer = FloatArray(bufferSize)
+        val floatOutBuffer = FloatArray(bufferSize)
+        val floatEngineOutBuffer = FloatArray(bufferSize)
+        val shortBuffer = ShortArray(bufferSize)
+        val shortOutBuffer = ShortArray(bufferSize)
+        val shortEngineOutBuffer = ShortArray(bufferSize)
 
         // TODO Move all audio-related code to C++
         recorderThread = Thread {
             try {
                 ServiceNotificationHelper.pushServiceNotification(applicationContext, arrayOf())
 
-                val floatBuffer = FloatArray(bufferSize)
-                val floatOutBuffer = FloatArray(bufferSize)
-                val shortBuffer = ShortArray(bufferSize)
-                val shortOutBuffer = ShortArray(bufferSize)
                 while (!isProcessorDisposing) {
                     if(recreateRecorderRequested) {
                         recreateRecorderRequested = false
@@ -518,13 +585,15 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                     // Choose encoding and process data
                     if(encoding == AudioEncoding.PcmShort) {
                         recorder.read(shortBuffer, 0, shortBuffer.size, AudioRecord.READ_BLOCKING)
-                        engine.processInt16(shortBuffer, shortOutBuffer)
-                        track.write(shortOutBuffer, 0, shortOutBuffer.size, AudioTrack.WRITE_BLOCKING)
+                        localCarProcessor.process(shortBuffer, shortOutBuffer)
+                        engine.processInt16(shortOutBuffer, shortEngineOutBuffer)
+                        track.write(shortEngineOutBuffer, 0, shortEngineOutBuffer.size, AudioTrack.WRITE_BLOCKING)
                     }
                     else {
                         recorder.read(floatBuffer, 0, floatBuffer.size, AudioRecord.READ_BLOCKING)
-                        engine.processFloat(floatBuffer, floatOutBuffer)
-                        track.write(floatOutBuffer, 0, floatOutBuffer.size, AudioTrack.WRITE_BLOCKING)
+                        localCarProcessor.process(floatBuffer, floatOutBuffer)
+                        engine.processFloat(floatOutBuffer, floatEngineOutBuffer)
+                        track.write(floatEngineOutBuffer, 0, floatEngineOutBuffer.size, AudioTrack.WRITE_BLOCKING)
                     }
                 }
             } catch (e: IOException) {
@@ -536,6 +605,9 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                 stopSelf()
             } finally {
                 // Clean up recorder and track
+                if (carAudioTrack === track) {
+                    carAudioTrack = null
+                }
                 if(recorder.state != AudioRecord.STATE_UNINITIALIZED) {
                     recorder.stop()
                 }
@@ -545,6 +617,9 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
 
                 recorder.release()
                 track.release()
+                if (carAudioProcessor === localCarProcessor) {
+                    carAudioProcessor = null
+                }
             }
         }
         recorderThread!!.start()
@@ -668,6 +743,29 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         return framesPerBuffer?.let { str -> Integer.parseInt(str).takeUnless { it == 0 } } ?: 256
     }
 
+    /**
+     * Android exposes the routed music stream level in dB on API 28+. If a head unit does not
+     * report it, the DSP post-gain remains a safe fallback instead of freezing loudness at a
+     * stale volume value.
+     */
+    private fun determineEffectiveOutputGainDb(track: AudioTrack?, postGain: Float): Float {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || track == null) return postGain
+
+        return try {
+            val index = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+            val deviceType = track.routedDevice?.type ?: android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+            val streamDb = audioManager.getStreamVolumeDb(
+                AudioManager.STREAM_MUSIC,
+                index,
+                deviceType,
+            )
+            if (streamDb.isFinite()) streamDb + postGain else postGain
+        } catch (ex: Exception) {
+            Timber.d("Unable to read routed stream volume; using DSP post-gain")
+            postGain
+        }
+    }
+
     companion object {
         const val SESSION_LOSS_MAX_RETRIES = 1
 
@@ -676,6 +774,8 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         const val EXTRA_MEDIA_PROJECTION_DATA = "mediaProjectionData"
         const val EXTRA_APP_UID = "uid"
         const val EXTRA_APP_COMPAT_INTERNAL_CALL = "appCompatInternalCall"
+        const val CAR_AUDIO_METER_INTERVAL_MS = 100L
+        const val VOLUME_UPDATE_INTERVAL_NANOS = 200_000_000L
 
         fun start(context: Context, data: Intent?) {
             try {

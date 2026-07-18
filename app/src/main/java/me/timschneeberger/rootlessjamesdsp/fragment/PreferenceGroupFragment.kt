@@ -12,9 +12,11 @@ import androidx.annotation.XmlRes
 import androidx.preference.Preference
 import androidx.preference.Preference.SummaryProvider
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.ListPreference
 import androidx.preference.PreferenceScreen
 import androidx.recyclerview.widget.RecyclerView
 import me.timschneeberger.rootlessjamesdsp.R
+import me.timschneeberger.rootlessjamesdsp.audio.CarAudioProcessor
 import me.timschneeberger.rootlessjamesdsp.activity.GraphicEqualizerActivity
 import me.timschneeberger.rootlessjamesdsp.activity.LiveprogEditorActivity
 import me.timschneeberger.rootlessjamesdsp.activity.ParametricEqualizerActivity
@@ -56,10 +58,23 @@ class PreferenceGroupFragment : PreferenceFragmentCompat(), KoinComponent {
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if(intent?.action == Constants.ACTION_PRESET_LOADED) {
-                val id = this@PreferenceGroupFragment.id
-                Timber.d("Reloading group fragment for ${this@PreferenceGroupFragment.preferenceManager.sharedPreferencesName}")
-                (requireParentFragment() as DspFragment).restartFragment(id, cloneInstance(this@PreferenceGroupFragment))
+            when (intent?.action) {
+                Constants.ACTION_PRESET_LOADED -> {
+                    val id = this@PreferenceGroupFragment.id
+                    Timber.d("Reloading group fragment for ${this@PreferenceGroupFragment.preferenceManager.sharedPreferencesName}")
+                    (requireParentFragment() as DspFragment).restartFragment(id, cloneInstance(this@PreferenceGroupFragment))
+                }
+                Constants.ACTION_CAR_AUDIO_METER -> {
+                    val meter = findPreference<Preference>(getString(R.string.key_three_band_gain_reduction_meter))
+                    val gainReduction = intent.getFloatExtra(Constants.EXTRA_CAR_AUDIO_GAIN_REDUCTION_DB, 0f)
+                    meter?.summary = getString(R.string.car_audio_gain_reduction_value, gainReduction)
+                    findPreference<Preference>(getString(R.string.key_three_band_low_gain_reduction_meter))?.summary =
+                        getString(R.string.car_audio_low_gain_reduction, intent.getFloatExtra(Constants.EXTRA_CAR_AUDIO_LOW_GAIN_REDUCTION_DB, 0f))
+                    findPreference<Preference>(getString(R.string.key_three_band_mid_gain_reduction_meter))?.summary =
+                        getString(R.string.car_audio_mid_gain_reduction, intent.getFloatExtra(Constants.EXTRA_CAR_AUDIO_MID_GAIN_REDUCTION_DB, 0f))
+                    findPreference<Preference>(getString(R.string.key_three_band_high_gain_reduction_meter))?.summary =
+                        getString(R.string.car_audio_high_gain_reduction, intent.getFloatExtra(Constants.EXTRA_CAR_AUDIO_HIGH_GAIN_REDUCTION_DB, 0f))
+                }
             }
         }
     }
@@ -93,6 +108,85 @@ class PreferenceGroupFragment : PreferenceFragmentCompat(), KoinComponent {
                             else -> it.roundToInt().toString()
                         }
                     }
+            }
+            R.xml.dsp_three_band_preferences -> {
+                val presetPreference = findPreference<ListPreference>(getString(R.string.key_three_band_preset))
+                presetPreference?.setOnPreferenceChangeListener { _, value ->
+                    val preset = (value as? String)?.toIntOrNull() ?: return@setOnPreferenceChangeListener false
+                    val settings = CarAudioProcessor.presetSettings(preset)
+                    val values = mapOf(
+                        R.string.key_three_band_low_threshold to settings.low.thresholdDb,
+                        R.string.key_three_band_low_ratio to settings.low.ratio,
+                        R.string.key_three_band_low_makeup to settings.low.makeupDb,
+                        R.string.key_three_band_low_attack to settings.low.attackMs,
+                        R.string.key_three_band_low_release to settings.low.releaseMs,
+                        R.string.key_three_band_mid_threshold to settings.mid.thresholdDb,
+                        R.string.key_three_band_mid_ratio to settings.mid.ratio,
+                        R.string.key_three_band_mid_makeup to settings.mid.makeupDb,
+                        R.string.key_three_band_mid_attack to settings.mid.attackMs,
+                        R.string.key_three_band_mid_release to settings.mid.releaseMs,
+                        R.string.key_three_band_high_threshold to settings.high.thresholdDb,
+                        R.string.key_three_band_high_ratio to settings.high.ratio,
+                        R.string.key_three_band_high_makeup to settings.high.makeupDb,
+                        R.string.key_three_band_high_attack to settings.high.attackMs,
+                        R.string.key_three_band_high_release to settings.high.releaseMs,
+                    )
+                    values.forEach { (keyRes, setting) ->
+                        findPreference<MaterialSeekbarPreference>(getString(keyRes))?.setValue(setting)
+                    }
+                    true
+                }
+            }
+            R.xml.dsp_car_spatializer_preferences -> {
+                val spatialPrefs = preferenceManager.sharedPreferences
+                val modePreference = findPreference<ListPreference>(getString(R.string.key_car_spatializer_mode))
+                val spatialValues = listOf(
+                    findPreference<MaterialSeekbarPreference>(getString(R.string.key_car_spatializer_strength)),
+                    findPreference<MaterialSeekbarPreference>(getString(R.string.key_car_spatializer_front_focus)),
+                    findPreference<MaterialSeekbarPreference>(getString(R.string.key_car_spatializer_envelopment)),
+                )
+                if (spatialPrefs != null && modePreference != null) {
+                    fun modeKey(baseKey: String, mode: String): String = "${baseKey}_mode$mode"
+
+                    fun saveSpatialMode(mode: String) {
+                        val editor = spatialPrefs.edit()
+                        spatialValues.forEach { preference ->
+                            preference ?: return@forEach
+                            editor.putFloat(modeKey(preference.key, mode), preference.getValue())
+                        }
+                        editor.apply()
+                    }
+
+                    fun loadSpatialMode(mode: String) {
+                        spatialValues.forEach { preference ->
+                            preference ?: return@forEach
+                            val key = modeKey(preference.key, mode)
+                            if (spatialPrefs.contains(key)) {
+                                preference.setValue(spatialPrefs.getFloat(key, preference.getValue()))
+                            }
+                        }
+                    }
+
+                    // Restore the last contour for the selected mode as soon as the card is
+                    // created. Existing unsuffixed preferences remain the migration fallback.
+                    loadSpatialMode(modePreference.value ?: "0")
+                    spatialValues.forEach { preference ->
+                        preference?.setOnPreferenceChangeListener { _, value ->
+                            val mode = modePreference.value ?: "0"
+                            val number = (value as? Number)?.toFloat() ?: return@setOnPreferenceChangeListener false
+                            spatialPrefs.edit()
+                                .putFloat(modeKey(preference.key, mode), number)
+                                .apply()
+                            true
+                        }
+                    }
+                    modePreference.setOnPreferenceChangeListener { _, value ->
+                        val oldMode = modePreference.value ?: "0"
+                        saveSpatialMode(oldMode)
+                        loadSpatialMode((value as? String) ?: "0")
+                        true
+                    }
+                }
             }
             R.xml.dsp_stereowide_preferences -> {
                 findPreference<MaterialSeekbarPreference>(getString(R.string.key_stereowide_mode))?.valueLabelOverride =

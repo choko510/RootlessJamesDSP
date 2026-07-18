@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="car_audio_auto_loudness">自動ラウドネス</string>
+    <string name="car_audio_auto_loudness_summary">小音量時に低域・高域を音量連動で補正</string>
+    <string name="car_audio_loudness_bass">低域最大補正</string>
+    <string name="car_audio_loudness_treble">高域最大補正</string>
+    <string name="car_audio_loudness_low_threshold">小音量境界</string>
+    <string name="car_audio_loudness_mid_threshold">中音量境界</string>
+    <string name="car_audio_loudness_high_threshold">大音量境界</string>
+    <string name="car_audio_three_band">3バンドコンプレッサー</string>
+    <string name="car_audio_three_band_summary">低域・中域・高域を個別に制御します。既存コンパンダーとの重ね掛けは二重圧縮に注意してください。</string>
+    <string name="car_audio_compressor_preset">強さ</string>
+    <string name="car_audio_low_threshold">低域しきい値（20〜120Hz）</string>
+    <string name="car_audio_low_ratio">低域レシオ</string>
+    <string name="car_audio_low_makeup">低域メイクアップゲイン</string>
+    <string name="car_audio_low_attack">低域アタック</string>
+    <string name="car_audio_low_release">低域リリース</string>
+    <string name="car_audio_mid_threshold">中域しきい値（120Hz〜2kHz）</string>
+    <string name="car_audio_mid_ratio">中域レシオ</string>
+    <string name="car_audio_mid_makeup">中域メイクアップゲイン</string>
+    <string name="car_audio_mid_attack">中域アタック</string>
+    <string name="car_audio_mid_release">中域リリース</string>
+    <string name="car_audio_high_threshold">高域しきい値（2kHz以上）</string>
+    <string name="car_audio_high_ratio">高域レシオ</string>
+    <string name="car_audio_high_makeup">高域メイクアップゲイン</string>
+    <string name="car_audio_high_attack">高域アタック</string>
+    <string name="car_audio_high_release">高域リリース</string>
+    <string name="car_audio_gain_reduction">ゲインリダクション</string>
+    <string name="car_audio_gain_reduction_idle">Rootless処理中にメーターを表示します</string>
+    <string name="car_audio_gain_reduction_value">現在の最大値: %1$.1f dB</string>
+    <string name="car_audio_low_gain_reduction">低域GR: %1$.1f dB</string>
+    <string name="car_audio_mid_gain_reduction">中域GR: %1$.1f dB</string>
+    <string name="car_audio_high_gain_reduction">高域GR: %1$.1f dB</string>
+    <string name="car_audio_low_gain_reduction_title">低域ゲインリダクション</string>
+    <string name="car_audio_mid_gain_reduction_title">中域ゲインリダクション</string>
+    <string name="car_audio_high_gain_reduction_title">高域ゲインリダクション</string>
+    <string name="car_audio_spatializer">車載Spatializer</string>
+    <string name="car_audio_spatializer_summary">前方定位と車内の包囲感を調整</string>
+    <string name="car_audio_spatializer_mode">モード</string>
+    <string name="car_audio_spatializer_off">オフ</string>
+    <string name="car_audio_spatializer_natural">ナチュラル</string>
+    <string name="car_audio_spatializer_wide">ワイド</string>
+    <string name="car_audio_spatializer_immersive">イマーシブ</string>
+    <string name="car_audio_spatializer_strength">強さ</string>
+    <string name="car_audio_spatializer_front_focus">前方定位</string>
+    <string name="car_audio_spatializer_envelopment">包囲感</string>
+</resources>

@@ -169,6 +169,32 @@
         <item>3</item>
     </string-array>
 
+    <string-array name="car_audio_compressor_presets" translatable="false">
+        <item>@string/car_audio_compressor_gentle</item>
+        <item>@string/car_audio_compressor_normal</item>
+        <item>@string/car_audio_compressor_strong</item>
+    </string-array>
+
+    <string-array name="car_audio_compressor_preset_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </string-array>
+
+    <string-array name="car_audio_spatializer_modes" translatable="false">
+        <item>@string/car_audio_spatializer_off</item>
+        <item>@string/car_audio_spatializer_natural</item>
+        <item>@string/car_audio_spatializer_wide</item>
+        <item>@string/car_audio_spatializer_immersive</item>
+    </string-array>
+
+    <string-array name="car_audio_spatializer_mode_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+    </string-array>
+
     <string-array name="convolver_convolution_mode" translatable="false">
         <item>@string/convolver_convolution_mode_original</item>
         <item>@string/convolver_convolution_mode_shrink</item>

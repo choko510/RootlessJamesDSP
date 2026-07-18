@@ -1,0 +1,4 @@
+<resources>
+    <!-- The Android head-unit profile is intentionally roomier on 1280dp-wide displays. -->
+    <dimen name="dsp_content_margin">64dp</dimen>
+</resources>

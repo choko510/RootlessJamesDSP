@@ -28,6 +28,20 @@ abstract class JamesDspBaseEngine(val context: Context, val callbacks: JamesDspW
             field = value
             reportSampleRate(value)
         }
+    var streamBufferSamples: Int = 0
+        private set
+
+    /**
+     * Configures the PCM stream contract used by the local and remote engines. The current
+     * Android playback-capture path is stereo; keeping sample rate, channel count and buffer size
+     * explicit prevents a stream reconfiguration from leaving DSP state or working buffers stale.
+     */
+    open fun configureStream(sampleRate: Float, bufferSamples: Int, channelCount: Int = 2) {
+        require(channelCount == 2) { "JamesDSP currently supports stereo streams only" }
+        require(bufferSamples > 0) { "Stream buffer size must be positive" }
+        streamBufferSamples = bufferSamples
+        this.sampleRate = sampleRate
+    }
 
     private val syncScope = CoroutineScope(Dispatchers.IO)
     private val syncMutex = Mutex()

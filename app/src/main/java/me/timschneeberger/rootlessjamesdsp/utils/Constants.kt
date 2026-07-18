@@ -9,7 +9,9 @@ object Constants {
 
     // DSP-relevant preference namespaces
     const val PREF_BASS = "dsp_bass"
+    const val PREF_AUTO_LOUDNESS = "dsp_auto_loudness"
     const val PREF_COMPANDER = "dsp_compander"
+    const val PREF_THREE_BAND_COMPRESSOR = "dsp_three_band_compressor"
     const val PREF_CONVOLVER = "dsp_convolver"
     const val PREF_CROSSFEED = "dsp_crossfeed"
     const val PREF_DDC = "dsp_ddc"
@@ -20,6 +22,7 @@ object Constants {
     const val PREF_OUTPUT = "dsp_output_control"
     const val PREF_REVERB = "dsp_reverb"
     const val PREF_STEREOWIDE = "dsp_stereowide"
+    const val PREF_CAR_SPATIALIZER = "dsp_car_spatializer"
     const val PREF_TUBE = "dsp_tube"
 
     // Default string values
@@ -41,6 +44,7 @@ object Constants {
     const val ACTION_SERVICE_RELOAD_LIVEPROG = BuildConfig.APPLICATION_ID + ".action.service.RELOAD_LIVEPROG"
     const val ACTION_SERVICE_HARD_REBOOT_CORE = BuildConfig.APPLICATION_ID + ".action.service.HARD_REBOOT_CORE"
     const val ACTION_SERVICE_SOFT_REBOOT_CORE = BuildConfig.APPLICATION_ID + ".action.service.SOFT_REBOOT_CORE"
+    const val ACTION_CAR_AUDIO_METER = BuildConfig.APPLICATION_ID + ".action.service.CAR_AUDIO_METER"
     const val ACTION_PROCESSOR_MESSAGE = BuildConfig.APPLICATION_ID + ".action.service.PROCESSOR_MESSAGE"
     const val ACTION_DISCARD_AUTHORIZATION = BuildConfig.APPLICATION_ID + ".action.service.DISCARD_AUTHORIZATION"
     const val ACTION_REPORT_SAMPLE_RATE = BuildConfig.APPLICATION_ID + ".action.service.REPORT_SAMPLE_RATE"
@@ -48,4 +52,8 @@ object Constants {
 
     // Intent extras
     const val EXTRA_SAMPLE_RATE = BuildConfig.APPLICATION_ID + ".extra.service.SAMPLE_RATE"
+    const val EXTRA_CAR_AUDIO_GAIN_REDUCTION_DB = BuildConfig.APPLICATION_ID + ".extra.service.CAR_AUDIO_GAIN_REDUCTION_DB"
+    const val EXTRA_CAR_AUDIO_LOW_GAIN_REDUCTION_DB = BuildConfig.APPLICATION_ID + ".extra.service.CAR_AUDIO_LOW_GAIN_REDUCTION_DB"
+    const val EXTRA_CAR_AUDIO_MID_GAIN_REDUCTION_DB = BuildConfig.APPLICATION_ID + ".extra.service.CAR_AUDIO_MID_GAIN_REDUCTION_DB"
+    const val EXTRA_CAR_AUDIO_HIGH_GAIN_REDUCTION_DB = BuildConfig.APPLICATION_ID + ".extra.service.CAR_AUDIO_HIGH_GAIN_REDUCTION_DB"
 }
