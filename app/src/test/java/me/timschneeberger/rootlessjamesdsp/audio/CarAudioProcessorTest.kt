@@ -94,6 +94,27 @@ class CarAudioProcessorTest {
         for (i in output.indices step 2) assertEquals(output[i], output[i + 1], 0.0001f)
     }
 
+    @Test
+    fun spatializerHandlesAudioBufferBoundaries() {
+        for (bufferSize in listOf(1, 2, 255, 256, 511, 512, 1023)) {
+            val processor = CarAudioProcessor(48_000)
+            processor.update(CarAudioSettings(
+                spatializer = CarSpatializerSettings(
+                    enabled = true,
+                    mode = 3,
+                    strength = 100f,
+                    frontFocus = 0f,
+                    envelopment = 100f,
+                ),
+            ))
+            processor.prepare(bufferSize)
+            val input = FloatArray(bufferSize) { if (it % 2 == 0) 0.2f else -0.2f }
+            val output = FloatArray(bufferSize)
+            processor.process(input, output)
+            assertTrue(output.all { it.isFinite() && abs(it) <= 1f })
+        }
+    }
+
     private fun rms(values: FloatArray, start: Int): Float {
         var sum = 0.0
         for (i in start until values.size) sum += values[i].toDouble() * values[i].toDouble()

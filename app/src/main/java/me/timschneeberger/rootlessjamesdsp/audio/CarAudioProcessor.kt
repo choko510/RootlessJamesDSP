@@ -363,22 +363,36 @@ class CarAudioProcessor(private val sampleRate: Int) {
             }
 
             if (spatialEnabled) {
-                val mid = (left + right) * 0.5f
-                val side = (left - right) * 0.5f
-                val lowSide = spatialLowSide + spatialLow * (side - spatialLowSide)
-                spatialLowSide = lowSide
-                val highSide = side - lowSide
-                val delayedIndex = (delayIndex - delaySamples + delay.size) % delay.size
-                val delayedSide = delay[delayedIndex]
-                delay[delayIndex] = side
-                delayIndex = (delayIndex + 1) % delay.size
+                val dryLeft = left
+                val dryRight = right
+                try {
+                    val mid = (left + right) * 0.5f
+                    val side = (left - right) * 0.5f
+                    val lowSide = spatialLowSide + spatialLow * (side - spatialLowSide)
+                    spatialLowSide = lowSide
+                    val highSide = side - lowSide
+                    // Keep the one-sample fallback safe as well (useful during defensive startup
+                    // tests with an invalid/zero sample rate).
+                    val delayedIndex = if (delay.size <= 1) 0 else
+                        (delayIndex - delaySamples + delay.size) % delay.size
+                    val delayedSide = delay[delayedIndex]
+                    delay[delayIndex] = side
+                    delayIndex = if (delay.size <= 1) 0 else (delayIndex + 1) % delay.size
 
-                val lowWidth = 1f - 0.5f * spatialStrength
-                val highWidth = 1f + 0.8f * spatialStrength
-                val sideOut = lowSide * lowWidth + highSide * highWidth + delayedSide * (0.15f * envelope)
-                val midOut = mid * (1f + 0.12f * focus)
-                left = midOut + sideOut
-                right = midOut - sideOut
+                    val lowWidth = 1f - 0.5f * spatialStrength
+                    val highWidth = 1f + 0.8f * spatialStrength
+                    val sideOut = lowSide * lowWidth + highSide * highWidth + delayedSide * (0.15f * envelope)
+                    val midOut = mid * (1f + 0.12f * focus)
+                    left = midOut + sideOut
+                    right = midOut - sideOut
+                } catch (_: RuntimeException) {
+                    // A malformed legacy preference must not tear down the audio service. The
+                    // current frame remains dry and state is reset for the next block.
+                    left = dryLeft
+                    right = dryRight
+                    spatialLowSide = 0f
+                    delayIndex = 0
+                }
             }
 
             output[index] = safeLimit(left)
