@@ -87,6 +87,7 @@
 
     <!-- DSP -->
     <string name="key_auto_loudness_enable" translatable="false">auto_loudness_enable</string>
+    <string name="key_auto_loudness_preset" translatable="false">auto_loudness_preset</string>
     <string name="key_auto_loudness_bass_max" translatable="false">auto_loudness_bass_max</string>
     <string name="key_auto_loudness_treble_max" translatable="false">auto_loudness_treble_max</string>
     <string name="key_auto_loudness_low_threshold" translatable="false">auto_loudness_low_threshold</string>

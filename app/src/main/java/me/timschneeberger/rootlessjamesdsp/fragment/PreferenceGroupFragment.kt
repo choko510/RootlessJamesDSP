@@ -137,6 +137,24 @@ class PreferenceGroupFragment : PreferenceFragmentCompat(), KoinComponent {
                     true
                 }
             }
+            R.xml.dsp_auto_loudness_preferences -> {
+                val presetPreference = findPreference<ListPreference>(getString(R.string.key_auto_loudness_preset))
+                presetPreference?.setOnPreferenceChangeListener { _, value ->
+                    val preset = (value as? String)?.toIntOrNull() ?: return@setOnPreferenceChangeListener false
+                    val settings = CarAudioProcessor.loudnessPresetSettings(preset)
+                    val values = mapOf(
+                        R.string.key_auto_loudness_bass_max to settings.bassMaxDb,
+                        R.string.key_auto_loudness_treble_max to settings.trebleMaxDb,
+                        R.string.key_auto_loudness_low_threshold to settings.lowVolumeDb,
+                        R.string.key_auto_loudness_mid_threshold to settings.midVolumeDb,
+                        R.string.key_auto_loudness_high_threshold to settings.highVolumeDb,
+                    )
+                    values.forEach { (keyRes, setting) ->
+                        findPreference<MaterialSeekbarPreference>(getString(keyRes))?.setValue(setting)
+                    }
+                    true
+                }
+            }
             R.xml.dsp_car_spatializer_preferences -> {
                 val spatialPrefs = preferenceManager.sharedPreferences
                 val modePreference = findPreference<ListPreference>(getString(R.string.key_car_spatializer_mode))

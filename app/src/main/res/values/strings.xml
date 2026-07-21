@@ -78,6 +78,10 @@
     <!-- Car audio enhancements -->
     <string name="car_audio_auto_loudness">Automatic loudness</string>
     <string name="car_audio_auto_loudness_summary">Volume-linked bass and treble compensation for quiet listening</string>
+    <string name="car_audio_loudness_preset">Strength</string>
+    <string name="car_audio_loudness_weak">Weak</string>
+    <string name="car_audio_loudness_medium">Medium</string>
+    <string name="car_audio_loudness_strong">Strong</string>
     <string name="car_audio_loudness_bass">Maximum bass lift</string>
     <string name="car_audio_loudness_treble">Maximum treble lift</string>
     <string name="car_audio_loudness_low_threshold">Quiet-volume point</string>
