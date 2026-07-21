@@ -257,11 +257,12 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
                 .build()
         )
 
-        StrictMode.setVmPolicy(
-            StrictMode.VmPolicy.Builder()
+        fun buildVmPolicy(detectCleartextNetwork: Boolean): StrictMode.VmPolicy {
+            return StrictMode.VmPolicy.Builder()
                 .apply {
                     detectLeakedRegistrationObjects()
-                    detectCleartextNetwork()
+                    if (detectCleartextNetwork)
+                        detectCleartextNetwork()
                     detectActivityLeaks()
                     detectLeakedClosableObjects()
                     detectLeakedSqlLiteObjects()
@@ -270,7 +271,18 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
                     // penaltyDeath()
                 }
                 .build()
-        )
+        }
+
+        try {
+            StrictMode.setVmPolicy(buildVmPolicy(detectCleartextNetwork = true))
+        }
+        catch (ex: RuntimeException) {
+            // Some emulator images (including LDPlayer) expose the cleartext
+            // network check but their network service cannot apply it. This is
+            // a debug-only diagnostic and must not prevent the app from starting.
+            Timber.w(ex, "Cleartext network detection is unavailable; continuing without it")
+            StrictMode.setVmPolicy(buildVmPolicy(detectCleartextNetwork = false))
+        }
 
         Pluto.Installer(this)
             .addPlugin(PlutoNetworkPlugin("network"))

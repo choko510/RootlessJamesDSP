@@ -10,6 +10,8 @@
 
     <!-- Two-column head-unit layout for 1280dp-wide displays. All IDs mirror the compact layout
          so DspFragment and preset/backup handling remain unchanged. -->
+    <!-- Leave room for the fixed BottomAppBar when the final expanded card
+         in the left column is taller than the right column. -->
     <LinearLayout
         android:id="@+id/card_container"
         android:layout_width="match_parent"
@@ -17,7 +19,7 @@
         android:layout_marginHorizontal="@dimen/dsp_content_margin"
         android:orientation="horizontal"
         android:paddingTop="4dp"
-        android:paddingBottom="16dp"
+        android:paddingBottom="?attr/actionBarSize"
         tools:ignore="UselessParent">
 
         <LinearLayout
