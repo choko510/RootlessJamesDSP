@@ -181,6 +181,18 @@
         <item>2</item>
     </string-array>
 
+    <string-array name="car_audio_loudness_presets" translatable="false">
+        <item>@string/car_audio_loudness_strong</item>
+        <item>@string/car_audio_loudness_medium</item>
+        <item>@string/car_audio_loudness_weak</item>
+    </string-array>
+
+    <string-array name="car_audio_loudness_preset_values" translatable="false">
+        <item>2</item>
+        <item>1</item>
+        <item>0</item>
+    </string-array>
+
     <string-array name="car_audio_spatializer_modes" translatable="false">
         <item>@string/car_audio_spatializer_off</item>
         <item>@string/car_audio_spatializer_natural</item>

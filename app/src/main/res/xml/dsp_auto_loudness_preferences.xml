@@ -8,6 +8,14 @@
         android:defaultValue="false"
         android:icon="@drawable/ic_twotone_volume_up_24dp"
         app:iconSpaceReserved="false">
+        <ListPreference
+            android:key="@string/key_auto_loudness_preset"
+            android:title="@string/car_audio_loudness_preset"
+            android:defaultValue="1"
+            android:entries="@array/car_audio_loudness_presets"
+            android:entryValues="@array/car_audio_loudness_preset_values"
+            app:useSimpleSummaryProvider="true"
+            app:iconSpaceReserved="false" />
         <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
             android:key="@string/key_auto_loudness_bass_max"
             android:title="@string/car_audio_loudness_bass"

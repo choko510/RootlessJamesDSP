@@ -522,6 +522,26 @@ class CarAudioProcessor(private val sampleRate: Int) {
             }
         }
 
+        fun loudnessPresetSettings(preset: Int): AutoLoudnessSettings {
+            return when (preset.coerceIn(0, 2)) {
+                0 -> AutoLoudnessSettings(
+                    bassMaxDb = 3f,
+                    trebleMaxDb = 1.5f,
+                    lowVolumeDb = -30f,
+                    midVolumeDb = -18f,
+                    highVolumeDb = -6f,
+                )
+                2 -> AutoLoudnessSettings(
+                    bassMaxDb = 9f,
+                    trebleMaxDb = 6f,
+                    lowVolumeDb = -30f,
+                    midVolumeDb = -18f,
+                    highVolumeDb = -6f,
+                )
+                else -> AutoLoudnessSettings()
+            }
+        }
+
         /** Returns 1 at the low-volume point, 0.5 at the mid point and 0 at high volume. */
         fun loudnessStrength(gainDb: Float, lowDb: Float, midDb: Float, highDb: Float, treble: Boolean): Float {
             // The treble table is 3 dB -> 1 dB -> 0 dB, hence normalized strengths 1, 1/3, 0.

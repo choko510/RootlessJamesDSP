@@ -34,6 +34,23 @@ class CarAudioProcessorTest {
     }
 
     @Test
+    fun loudnessPresetsScaleCorrectionStrength() {
+        val weak = CarAudioProcessor.loudnessPresetSettings(0)
+        val medium = CarAudioProcessor.loudnessPresetSettings(1)
+        val strong = CarAudioProcessor.loudnessPresetSettings(2)
+
+        assertEquals(3f, weak.bassMaxDb, 0.001f)
+        assertEquals(1.5f, weak.trebleMaxDb, 0.001f)
+        assertEquals(6f, medium.bassMaxDb, 0.001f)
+        assertEquals(3f, medium.trebleMaxDb, 0.001f)
+        assertEquals(9f, strong.bassMaxDb, 0.001f)
+        assertEquals(6f, strong.trebleMaxDb, 0.001f)
+        assertEquals(medium.lowVolumeDb, strong.lowVolumeDb, 0.001f)
+        assertEquals(medium.midVolumeDb, strong.midVolumeDb, 0.001f)
+        assertEquals(medium.highVolumeDb, strong.highVolumeDb, 0.001f)
+    }
+
+    @Test
     fun disabledProcessorIsBitTransparent() {
         val input = FloatArray(256) { ((it * 37) % 100 - 50) / 100f }
         val output = FloatArray(input.size)
