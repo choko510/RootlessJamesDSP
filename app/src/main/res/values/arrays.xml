@@ -207,6 +207,18 @@
         <item>3</item>
     </string-array>
 
+    <string-array name="car_audio_spatializer_cabin_sizes" translatable="false">
+        <item>@string/car_audio_spatializer_cabin_compact</item>
+        <item>@string/car_audio_spatializer_cabin_standard</item>
+        <item>@string/car_audio_spatializer_cabin_large</item>
+    </string-array>
+
+    <string-array name="car_audio_spatializer_cabin_size_values" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </string-array>
+
     <string-array name="convolver_convolution_mode" translatable="false">
         <item>@string/convolver_convolution_mode_original</item>
         <item>@string/convolver_convolution_mode_shrink</item>

@@ -96,7 +96,7 @@ class CarAudioProcessorTest {
     fun spatializerKeepsMonoCentered() {
         val processor = CarAudioProcessor(48_000)
         processor.update(CarAudioSettings(
-            spatializer = CarSpatializerSettings(enabled = true, mode = 3, strength = 80f, envelopment = 70f),
+            spatializer = CarSpatializerSettings(enabled = true, mode = 3, strength = 80f, envelopment = 0f),
         ))
         val input = FloatArray(4_800) { i ->
             (0.2 * kotlin.math.sin(2.0 * Math.PI * 440.0 * i / 48_000.0)).toFloat()
@@ -110,8 +110,127 @@ class CarAudioProcessorTest {
         processor.process(stereoInput, output)
         for (i in output.indices step 2) {
             assertEquals(output[i], output[i + 1], 0.0001f)
-            assertEquals(input[i / 2], output[i], 0.0001f)
         }
+        assertTrue(rms(output, 0) < rms(stereoInput, 0) * 1.15f)
+    }
+
+    @Test
+    fun envelopmentCreatesAQuietMonoBedForFrontSeats() {
+        for (cabinSize in 0..2) {
+            val processor = CarAudioProcessor(48_000)
+            processor.update(CarAudioSettings(
+                spatializer = CarSpatializerSettings(
+                    enabled = true,
+                    mode = 3,
+                    strength = 0f,
+                    frontFocus = 0f,
+                    envelopment = 100f,
+                    cabinSize = cabinSize,
+                ),
+            ))
+            val warmup = FloatArray(96_000)
+            processor.process(warmup, FloatArray(warmup.size))
+
+            val input = FloatArray(96_000)
+            for (frame in 0 until 48_000) {
+                val sample = (
+                    0.08 * kotlin.math.sin(2.0 * Math.PI * 380.0 * frame / 48_000.0) +
+                        0.05 * kotlin.math.sin(2.0 * Math.PI * 910.0 * frame / 48_000.0) +
+                        0.04 * kotlin.math.sin(2.0 * Math.PI * 1_730.0 * frame / 48_000.0) +
+                        0.03 * kotlin.math.sin(2.0 * Math.PI * 3_100.0 * frame / 48_000.0)
+                    ).toFloat()
+                input[2 * frame] = sample
+                input[2 * frame + 1] = sample
+            }
+            val output = FloatArray(input.size)
+            processor.process(input, output)
+            val inputRms = stereoRms(input, 4_800, 48_000)
+            val directRms = stereoRms(output, 4_800, 48_000)
+            val differenceRms = stereoDifferenceRms(output, 4_800, 48_000)
+            assertTrue("cabin=$cabinSize difference=$differenceRms", differenceRms > directRms * 0.005f)
+            assertTrue("cabin=$cabinSize difference=$differenceRms", differenceRms < directRms * 0.25f)
+            val gainRatio = directRms / inputRms
+            assertTrue("cabin=$cabinSize gainRatio=$gainRatio", gainRatio in 0.85f..1.20f)
+            assertTrue(output.all { it.isFinite() && abs(it) <= 1f })
+        }
+    }
+
+    @Test
+    fun spatializerKeepsSubBassOutOfCabinAmbience() {
+        for (cabinSize in 0..2) {
+            val processor = CarAudioProcessor(48_000)
+            processor.update(CarAudioSettings(
+                spatializer = CarSpatializerSettings(
+                    enabled = true,
+                    mode = 3,
+                    strength = 0f,
+                    frontFocus = 0f,
+                    envelopment = 100f,
+                    cabinSize = cabinSize,
+                ),
+            ))
+            val input = FloatArray(96_000)
+            for (frame in 0 until 48_000) {
+                val sample = (0.12 * kotlin.math.sin(2.0 * Math.PI * 55.0 * frame / 48_000.0)).toFloat()
+                input[2 * frame] = sample
+                input[2 * frame + 1] = sample
+            }
+            val output = FloatArray(input.size)
+            processor.process(input, output)
+
+            val inputRms = stereoRms(input, 12_000, 48_000)
+            val outputRms = stereoRms(output, 12_000, 48_000)
+            val differenceRms = stereoDifferenceRms(output, 12_000, 48_000)
+            val gainRatio = outputRms / inputRms
+            assertTrue("cabin=$cabinSize gainRatio=$gainRatio", gainRatio in 0.98f..1.02f)
+            assertTrue(
+                "cabin=$cabinSize difference=$differenceRms",
+                differenceRms < inputRms * 0.015f,
+            )
+        }
+    }
+
+    @Test
+    fun cabinProfileChangeStaysFiniteAndClickFree() {
+        val processor = CarAudioProcessor(48_000)
+        processor.update(CarAudioSettings(
+            spatializer = CarSpatializerSettings(
+                enabled = true,
+                mode = 3,
+                strength = 0f,
+                frontFocus = 0f,
+                envelopment = 100f,
+                cabinSize = 0,
+            ),
+        ))
+        val firstInput = FloatArray(9_600) { i ->
+            (0.12 * kotlin.math.sin(2.0 * Math.PI * 1_000.0 * (i / 2) / 48_000.0)).toFloat()
+        }
+        val firstOutput = FloatArray(firstInput.size)
+        processor.process(firstInput, firstOutput)
+
+        processor.update(CarAudioSettings(
+            spatializer = CarSpatializerSettings(
+                enabled = true,
+                mode = 3,
+                strength = 0f,
+                frontFocus = 0f,
+                envelopment = 100f,
+                cabinSize = 2,
+            ),
+        ))
+        val secondInput = FloatArray(firstInput.size) { i ->
+            (0.12 * kotlin.math.sin(2.0 * Math.PI * 1_000.0 * ((i / 2) + 4_800) / 48_000.0)).toFloat()
+        }
+        val secondOutput = FloatArray(secondInput.size)
+        processor.process(secondInput, secondOutput)
+
+        var maxStep = abs(secondOutput[0] - firstOutput.last())
+        for (i in 1 until secondOutput.size) {
+            maxStep = maxOf(maxStep, abs(secondOutput[i] - secondOutput[i - 1]))
+        }
+        assertTrue("maxStep=$maxStep", maxStep < 0.25f)
+        assertTrue(secondOutput.all { it.isFinite() && abs(it) <= 1f })
     }
 
     @Test
@@ -164,7 +283,71 @@ class CarAudioProcessorTest {
     }
 
     @Test
-    fun spatializerPreservesTheCenterSignalAtMaximumSettings() {
+    fun spatializerKeepsCenterIndependentOfSideAtMaximumSettings() {
+        val spatialSettings = CarSpatializerSettings(
+            enabled = true,
+            mode = 3,
+            strength = 100f,
+            frontFocus = 100f,
+            envelopment = 100f,
+        )
+        val processor = CarAudioProcessor(48_000)
+        processor.update(CarAudioSettings(spatializer = spatialSettings))
+        val mirroredProcessor = CarAudioProcessor(48_000)
+        mirroredProcessor.update(CarAudioSettings(spatializer = spatialSettings))
+        val input = FloatArray(9_600) { i ->
+            if (i % 2 == 0) {
+                (0.05 * kotlin.math.sin(2.0 * Math.PI * 700.0 * (i / 2) / 48_000.0)).toFloat()
+            } else {
+                (0.05 * kotlin.math.sin(2.0 * Math.PI * 1_300.0 * (i / 2) / 48_000.0)).toFloat()
+            }
+        }
+        val mirroredInput = FloatArray(input.size)
+        for (i in input.indices step 2) {
+            mirroredInput[i] = input[i + 1]
+            mirroredInput[i + 1] = input[i]
+        }
+        val output = FloatArray(input.size)
+        val mirroredOutput = FloatArray(input.size)
+        processor.process(input, output)
+        mirroredProcessor.process(mirroredInput, mirroredOutput)
+        for (i in input.indices step 2) {
+            val outputCenter = (output[i] + output[i + 1]) * 0.5f
+            val mirroredCenter = (mirroredOutput[i] + mirroredOutput[i + 1]) * 0.5f
+            assertEquals(outputCenter, mirroredCenter, 0.000001f)
+        }
+    }
+
+    @Test
+    fun spatializerAddsTransientPunchWithoutSustainedBoom() {
+        val processor = CarAudioProcessor(48_000)
+        processor.update(CarAudioSettings(
+            spatializer = CarSpatializerSettings(
+                enabled = true,
+                mode = 3,
+                strength = 100f,
+                frontFocus = 100f,
+                envelopment = 0f,
+            ),
+        ))
+        val input = FloatArray(96_000)
+        for (frame in 4_800 until 48_000) {
+            val sample = (0.12 * kotlin.math.sin(2.0 * Math.PI * 140.0 * frame / 48_000.0)).toFloat()
+            input[2 * frame] = sample
+            input[2 * frame + 1] = sample
+        }
+        val output = FloatArray(input.size)
+        processor.process(input, output)
+
+        val attackRatio = stereoRms(output, 4_800, 5_760) / stereoRms(input, 4_800, 5_760)
+        val sustainRatio = stereoRms(output, 38_400, 48_000) / stereoRms(input, 38_400, 48_000)
+        assertTrue("attack=$attackRatio sustain=$sustainRatio", attackRatio > sustainRatio + 0.05f)
+        assertTrue("sustainRatio=$sustainRatio", sustainRatio in 1.00f..1.09f)
+        assertTrue("attackRatio=$attackRatio", attackRatio < 1.4f)
+    }
+
+    @Test
+    fun spatializerLowFrequencyBurstStopsCleanly() {
         val processor = CarAudioProcessor(48_000)
         processor.update(CarAudioSettings(
             spatializer = CarSpatializerSettings(
@@ -173,57 +356,52 @@ class CarAudioProcessorTest {
                 strength = 100f,
                 frontFocus = 100f,
                 envelopment = 100f,
+                cabinSize = 2,
             ),
         ))
-        val input = FloatArray(9_600) { i ->
-            if (i % 2 == 0) {
-                (0.05 * kotlin.math.sin(2.0 * Math.PI * 700.0 * (i / 2) / 48_000.0)).toFloat()
-            } else {
-                (0.05 * kotlin.math.sin(2.0 * Math.PI * 1_300.0 * (i / 2) / 48_000.0)).toFloat()
-            }
+        val input = FloatArray(96_000)
+        for (frame in 4_800 until 9_600) {
+            val sample = (0.12 * kotlin.math.sin(2.0 * Math.PI * 110.0 * frame / 48_000.0)).toFloat()
+            input[2 * frame] = sample
+            input[2 * frame + 1] = sample
         }
         val output = FloatArray(input.size)
         processor.process(input, output)
-        for (i in input.indices step 2) {
-            val inputCenter = (input[i] + input[i + 1]) * 0.5f
-            val outputCenter = (output[i] + output[i + 1]) * 0.5f
-            assertEquals(inputCenter, outputCenter, 0.000001f)
-        }
+
+        val burstRms = stereoRms(output, 7_200, 9_600)
+        val tailRms = stereoRms(output, 10_320, 12_000)
+        assertTrue("burst=$burstRms tail=$tailRms", tailRms < burstRms * 0.03f)
+        assertTrue(output.all { it.isFinite() && abs(it) <= 1f })
     }
 
     @Test
-    fun envelopmentDiffusesEarlyWithoutCreatingAHaasEcho() {
-        val spatialSettings = CarSpatializerSettings(
-            enabled = true,
-            mode = 3,
-            strength = 0f,
-            frontFocus = 0f,
-            envelopment = 100f,
-        )
-        val processor = CarAudioProcessor(48_000)
-        processor.update(CarAudioSettings(spatializer = spatialSettings))
-        val dryProcessor = CarAudioProcessor(48_000)
-        dryProcessor.update(CarAudioSettings(
-            spatializer = spatialSettings.copy(envelopment = 0f),
-        ))
-        val input = FloatArray(3_000)
-        input[0] = 0.2f
-        val output = FloatArray(input.size)
-        val dryOutput = FloatArray(input.size)
-        processor.process(input, output)
-        dryProcessor.process(input, dryOutput)
+    fun envelopmentDoesNotCreateADominantDelayedEcho() {
+        for (cabinSize in 0..2) {
+            val spatialSettings = CarSpatializerSettings(
+                enabled = true,
+                mode = 3,
+                strength = 0f,
+                frontFocus = 0f,
+                envelopment = 100f,
+                cabinSize = cabinSize,
+            )
+            val processor = CarAudioProcessor(48_000)
+            processor.update(CarAudioSettings(spatializer = spatialSettings))
+            val warmup = FloatArray(96_000)
+            processor.process(warmup, FloatArray(warmup.size))
 
-        var earlyDifference = 0f
-        for (i in 0 until 128) {
-            earlyDifference = maxOf(earlyDifference, abs(output[i] - dryOutput[i]))
-        }
-        assertTrue("earlyDifference=$earlyDifference", earlyDifference > 0.005f)
+            val input = FloatArray(9_600)
+            input[0] = 0.2f
+            input[1] = 0.2f
+            val output = FloatArray(input.size)
+            processor.process(input, output)
 
-        var latePeak = 0f
-        for (frame in 192 until 1_200) {
-            latePeak = maxOf(latePeak, abs(output[2 * frame]), abs(output[2 * frame + 1]))
+            var latePeak = 0f
+            for (frame in 240 until 2_400) {
+                latePeak = maxOf(latePeak, abs(output[2 * frame]), abs(output[2 * frame + 1]))
+            }
+            assertTrue("cabin=$cabinSize latePeak=$latePeak", latePeak < 0.05f)
         }
-        assertTrue("latePeak=$latePeak", latePeak < 0.001f)
     }
 
     @Test
@@ -251,5 +429,24 @@ class CarAudioProcessorTest {
         var sum = 0.0
         for (i in start until values.size) sum += values[i].toDouble() * values[i].toDouble()
         return sqrt(sum / (values.size - start)).toFloat()
+    }
+
+    private fun stereoRms(values: FloatArray, startFrame: Int, endFrame: Int): Float {
+        var sum = 0.0
+        for (frame in startFrame until endFrame) {
+            val left = values[2 * frame].toDouble()
+            val right = values[2 * frame + 1].toDouble()
+            sum += left * left + right * right
+        }
+        return sqrt(sum / ((endFrame - startFrame) * 2)).toFloat()
+    }
+
+    private fun stereoDifferenceRms(values: FloatArray, startFrame: Int, endFrame: Int): Float {
+        var sum = 0.0
+        for (frame in startFrame until endFrame) {
+            val difference = values[2 * frame].toDouble() - values[2 * frame + 1].toDouble()
+            sum += difference * difference
+        }
+        return sqrt(sum / (endFrame - startFrame)).toFloat()
     }
 }

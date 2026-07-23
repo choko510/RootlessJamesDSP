@@ -39,7 +39,7 @@
     <string name="car_audio_mid_gain_reduction_title">中域ゲインリダクション</string>
     <string name="car_audio_high_gain_reduction_title">高域ゲインリダクション</string>
     <string name="car_audio_spatializer">車載Spatializer</string>
-    <string name="car_audio_spatializer_summary">前方定位と車内の包囲感を調整</string>
+    <string name="car_audio_spatializer_summary">前方定位と車内の包囲感を調整（Stereo widen／Crossfeedとの重ねがけは非推奨）</string>
     <string name="car_audio_spatializer_mode">モード</string>
     <string name="car_audio_spatializer_off">オフ</string>
     <string name="car_audio_spatializer_natural">ナチュラル</string>
@@ -48,4 +48,8 @@
     <string name="car_audio_spatializer_strength">強さ</string>
     <string name="car_audio_spatializer_front_focus">前方定位</string>
     <string name="car_audio_spatializer_envelopment">包囲感</string>
+    <string name="car_audio_spatializer_cabin_size">車内サイズ</string>
+    <string name="car_audio_spatializer_cabin_compact">コンパクト／セダン</string>
+    <string name="car_audio_spatializer_cabin_standard">ワゴン／小型SUV</string>
+    <string name="car_audio_spatializer_cabin_large">大型SUV／ミニバン</string>
 </resources>

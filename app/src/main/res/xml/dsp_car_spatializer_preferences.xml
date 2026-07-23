@@ -16,6 +16,14 @@
             android:entryValues="@array/car_audio_spatializer_mode_values"
             app:useSimpleSummaryProvider="true"
             app:iconSpaceReserved="false" />
+        <ListPreference
+            android:key="@string/key_car_spatializer_cabin_size"
+            android:title="@string/car_audio_spatializer_cabin_size"
+            android:defaultValue="1"
+            android:entries="@array/car_audio_spatializer_cabin_sizes"
+            android:entryValues="@array/car_audio_spatializer_cabin_size_values"
+            app:useSimpleSummaryProvider="true"
+            app:iconSpaceReserved="false" />
         <me.timschneeberger.rootlessjamesdsp.preference.MaterialSeekbarPreference
             android:key="@string/key_car_spatializer_strength"
             android:title="@string/car_audio_spatializer_strength"

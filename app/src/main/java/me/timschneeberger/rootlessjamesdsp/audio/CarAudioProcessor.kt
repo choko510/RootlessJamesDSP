@@ -52,6 +52,7 @@ data class CarSpatializerSettings(
     val strength: Float = 35f,
     val frontFocus: Float = 70f,
     val envelopment: Float = 20f,
+    val cabinSize: Int = 1,
 )
 
 data class CarAudioSettings(
@@ -139,6 +140,7 @@ object CarAudioSettingsLoader {
                 strength = spatialFloat("car_spatializer_strength", 35f),
                 frontFocus = spatialFloat("car_spatializer_front_focus", 70f),
                 envelopment = spatialFloat("car_spatializer_envelopment", 20f),
+                cabinSize = spatial.int("car_spatializer_cabin_size", 1).coerceIn(0, 2),
             ),
             outputPostGainDb = output.float("output_postgain", 0f),
         )
@@ -178,9 +180,28 @@ class CarAudioProcessor(private val sampleRate: Int) {
     private var highGainReductionDb = 0f
     private var spatialLowSide = 0f
     private var spatialBodySide = 0f
+    private var spatialPunchLowMid = 0f
+    private var spatialPunchBodyMid = 0f
+    private var spatialPunchFastEnvelope = 0f
+    private var spatialPunchSlowEnvelope = 0f
+    private var spatialAmbienceLowMid = 0f
+    private var spatialAmbienceLowResidual = 0f
+    private var spatialAmbienceHighMid = 0f
+    private var spatialAmbienceFastEnvelope = 0f
+    private var spatialAmbienceSlowEnvelope = 0f
+    private var spatialSideAmbienceMix = 0f
+    private var spatialMidAmbienceMix = 0f
+    private var spatialStrengthControl = 0f
+    private var spatialFocusControl = 0f
     private var spatialWasEnabled = false
+    private var spatialCabinSize = 1
     private val spatialAllPassA = FirstOrderAllPass(0.62f)
     private val spatialAllPassB = FirstOrderAllPass(-0.38f)
+    private val spatialAmbienceMaxDelay = max(2, (sampleRate * 0.006f).toInt() + 4)
+    private val spatialAmbienceL1 = VariableAllPass(spatialAmbienceMaxDelay)
+    private val spatialAmbienceL2 = VariableAllPass(spatialAmbienceMaxDelay)
+    private val spatialAmbienceR1 = VariableAllPass(spatialAmbienceMaxDelay)
+    private val spatialAmbienceR2 = VariableAllPass(spatialAmbienceMaxDelay)
     private var floatInputScratch = FloatArray(0)
     private var floatOutputScratch = FloatArray(0)
 
@@ -189,6 +210,19 @@ class CarAudioProcessor(private val sampleRate: Int) {
     private val loudnessHigh = onePoleCoefficient(8000f)
     private val spatialLow = onePoleCoefficient(160f)
     private val spatialBody = onePoleCoefficient(6500f)
+    private val spatialAmbienceLow = onePoleCoefficient(250f)
+    private var spatialAmbienceHigh = onePoleCoefficient(6000f)
+    private val spatialAmbienceMix = timeCoefficient(50f)
+    private val spatialAmbienceFastAttack = timeCoefficient(4f)
+    private val spatialAmbienceFastRelease = timeCoefficient(50f)
+    private val spatialAmbienceSlowAttack = timeCoefficient(90f)
+    private val spatialAmbienceSlowRelease = timeCoefficient(250f)
+    private val spatialPunchLow = onePoleCoefficient(90f)
+    private val spatialPunchBody = onePoleCoefficient(320f)
+    private val spatialPunchFastAttack = timeCoefficient(3f)
+    private val spatialPunchFastRelease = timeCoefficient(32f)
+    private val spatialPunchSlowAttack = timeCoefficient(75f)
+    private val spatialPunchSlowRelease = timeCoefficient(180f)
     private val loudnessAttack = timeCoefficient(150f)
     private val loudnessRelease = timeCoefficient(750f)
 
@@ -235,6 +269,13 @@ class CarAudioProcessor(private val sampleRate: Int) {
         val current = settings
         val spatialMode = current.spatializer.mode.coerceIn(0, 3)
         val spatialEnabled = current.spatializer.enabled && spatialMode != 0
+        val cabinSize = current.spatializer.cabinSize.coerceIn(0, 2)
+        val cabinProfile = cabinProfile(cabinSize)
+        if (cabinSize != spatialCabinSize) {
+            spatialCabinSize = cabinSize
+            spatialAmbienceHigh = onePoleCoefficient(cabinProfile.highCutoffHz)
+            resetSpatialState()
+        }
         if (spatialEnabled != spatialWasEnabled) {
             resetSpatialState()
             spatialWasEnabled = spatialEnabled
@@ -276,22 +317,25 @@ class CarAudioProcessor(private val sampleRate: Int) {
         val highReleaseCoeff = timeCoefficient(comp.high.releaseMs)
 
         val spatial = current.spatializer
-        val spatialStrength = if (spatialEnabled) normalizedPercent(spatial.strength) else 0f
-        val focus = if (spatialEnabled) normalizedPercent(spatial.frontFocus) else 0f
+        val spatialStrengthTarget = if (spatialEnabled) normalizedPercent(spatial.strength) else 0f
+        val focusTarget = if (spatialEnabled) normalizedPercent(spatial.frontFocus) else 0f
         val envelope = if (spatialEnabled) normalizedPercent(spatial.envelopment) else 0f
-        val strengthCurve = spatialStrength * (0.65f + 0.35f * spatialStrength)
-        val widthAmount = strengthCurve * when (spatialMode) {
-            1 -> 0.20f
-            2 -> 0.42f
-            3 -> 0.58f
-            else -> 0f
-        }
         val ambienceMix = envelope * when (spatialMode) {
             1 -> 0.10f
             2 -> 0.16f
             3 -> 0.22f
             else -> 0f
         }
+        val midAmbienceMix = envelope * when (spatialMode) {
+            1 -> 0.06f
+            2 -> 0.10f
+            3 -> 0.15f
+            else -> 0f
+        }
+        val ambienceDelayL1 = delaySamples(cabinProfile.leftFirstDelayMs)
+        val ambienceDelayL2 = delaySamples(cabinProfile.leftSecondDelayMs)
+        val ambienceDelayR1 = delaySamples(cabinProfile.rightFirstDelayMs)
+        val ambienceDelayR2 = delaySamples(cabinProfile.rightSecondDelayMs)
 
         var maxGainReduction = 0f
         var maxLowGainReduction = 0f
@@ -367,6 +411,38 @@ class CarAudioProcessor(private val sampleRate: Int) {
             }
 
             if (spatialEnabled) {
+                spatialStrengthControl = smoothEnvelope(
+                    spatialStrengthControl,
+                    spatialStrengthTarget,
+                    spatialAmbienceMix,
+                    spatialAmbienceMix,
+                )
+                spatialFocusControl = smoothEnvelope(
+                    spatialFocusControl,
+                    focusTarget,
+                    spatialAmbienceMix,
+                    spatialAmbienceMix,
+                )
+                val strengthCurve = spatialStrengthControl * (0.65f + 0.35f * spatialStrengthControl)
+                val widthAmount = strengthCurve * when (spatialMode) {
+                    1 -> 0.20f
+                    2 -> 0.42f
+                    3 -> 0.58f
+                    else -> 0f
+                }
+                val punchScale = strengthCurve * (0.35f + 0.65f * spatialFocusControl)
+                val punchBodyAmount = punchScale * when (spatialMode) {
+                    1 -> 0.02f
+                    2 -> 0.035f
+                    3 -> 0.05f
+                    else -> 0f
+                }
+                val punchTransientAmount = punchScale * when (spatialMode) {
+                    1 -> 0.09f
+                    2 -> 0.16f
+                    3 -> 0.24f
+                    else -> 0f
+                }
                 val mid = (left + right) * 0.5f
                 val side = (left - right) * 0.5f
                 val lowSide = spatialLowSide + spatialLow * (side - spatialLowSide)
@@ -377,22 +453,110 @@ class CarAudioProcessor(private val sampleRate: Int) {
                 val airSide = side - lowAndBodySide
 
                 // Keep bass and upper treble stable, where large antiphase boosts are most
-                // fatiguing. Front focus narrows only the body expansion instead of raising the
-                // center level, so vocals stay forward without increasing loudness.
+                // fatiguing. Front focus narrows the body expansion; the separate direct stage
+                // below supplies low-mid impact without a broadband center lift.
                 val lowWidth = 1f - 0.08f * strengthCurve
-                val bodyWidth = 1f - 0.15f * focus + widthAmount * (1f - 0.35f * focus)
+                val bodyWidth = 1f - 0.15f * spatialFocusControl +
+                    widthAmount * (1f - 0.35f * spatialFocusControl)
                 val airWidth = 1f + 0.45f * widthAmount
 
                 // Short all-pass diffusion changes phase without adding the previous 5–20 ms
                 // discrete Side echo. Its contribution is deliberately bounded per mode.
                 val ambienceInput = bodySide + 0.35f * airSide
                 val diffusedSide = spatialAllPassB.process(spatialAllPassA.process(ambienceInput))
+                spatialSideAmbienceMix = smoothEnvelope(
+                    spatialSideAmbienceMix,
+                    ambienceMix,
+                    spatialAmbienceMix,
+                    spatialAmbienceMix,
+                )
+                spatialMidAmbienceMix = smoothEnvelope(
+                    spatialMidAmbienceMix,
+                    midAmbienceMix,
+                    spatialAmbienceMix,
+                    spatialAmbienceMix,
+                )
                 val sideOut = lowSide * lowWidth +
                     bodySide * bodyWidth +
                     airSide * airWidth +
-                    (diffusedSide - ambienceInput) * ambienceMix
-                left = mid + sideOut
-                right = mid - sideOut
+                    (diffusedSide - ambienceInput) * spatialSideAmbienceMix
+
+                // Restore impact from the direct signal, not from more antiphase width. The
+                // The 90–320 Hz band receives a small body lift plus a short attack-only lift.
+                // Keeping body gain below transient gain avoids turning cabin bass into a bloom.
+                val punchLowMid = spatialPunchLowMid + spatialPunchLow * (mid - spatialPunchLowMid)
+                spatialPunchLowMid = punchLowMid
+                val punchBodyMid = spatialPunchBodyMid + spatialPunchBody * (mid - spatialPunchBodyMid)
+                spatialPunchBodyMid = punchBodyMid
+                val punchBand = punchBodyMid - punchLowMid
+                val punchMagnitude = abs(punchBand)
+                spatialPunchFastEnvelope = smoothEnvelope(
+                    spatialPunchFastEnvelope,
+                    punchMagnitude,
+                    spatialPunchFastAttack,
+                    spatialPunchFastRelease,
+                )
+                spatialPunchSlowEnvelope = smoothEnvelope(
+                    spatialPunchSlowEnvelope,
+                    punchMagnitude,
+                    spatialPunchSlowAttack,
+                    spatialPunchSlowRelease,
+                )
+                val transient = (
+                    (spatialPunchFastEnvelope - spatialPunchSlowEnvelope) /
+                        max(spatialPunchFastEnvelope, 0.0001f)
+                ).coerceIn(0f, 1f)
+                val midOut = mid + punchBand * (
+                    punchBodyAmount + punchTransientAmount * transient
+                )
+
+                // Build a quiet cabin bed from sustained Mid content. Separate short all-pass
+                // paths lower inter-channel coherence without creating a single Haas tap, while
+                // the attack gate keeps the front image anchored to the direct signal.
+                val ambienceLowMid = spatialAmbienceLowMid + spatialAmbienceLow * (mid - spatialAmbienceLowMid)
+                spatialAmbienceLowMid = ambienceLowMid
+                // Cascade two high-pass stages so sub-bass never enters the recirculating paths.
+                val ambienceHighPassed = mid - ambienceLowMid
+                val ambienceLowResidual = spatialAmbienceLowResidual +
+                    spatialAmbienceLow * (ambienceHighPassed - spatialAmbienceLowResidual)
+                spatialAmbienceLowResidual = ambienceLowResidual
+                val tightenedAmbience = ambienceHighPassed - ambienceLowResidual
+                val ambienceHighMid = spatialAmbienceHighMid +
+                    spatialAmbienceHigh * (tightenedAmbience - spatialAmbienceHighMid)
+                spatialAmbienceHighMid = ambienceHighMid
+                val ambienceBand = ambienceHighMid
+                val ambienceMagnitude = abs(ambienceBand)
+                spatialAmbienceFastEnvelope = smoothEnvelope(
+                    spatialAmbienceFastEnvelope,
+                    ambienceMagnitude,
+                    spatialAmbienceFastAttack,
+                    spatialAmbienceFastRelease,
+                )
+                spatialAmbienceSlowEnvelope = smoothEnvelope(
+                    spatialAmbienceSlowEnvelope,
+                    ambienceMagnitude,
+                    spatialAmbienceSlowAttack,
+                    spatialAmbienceSlowRelease,
+                )
+                val ambienceTransient = (
+                    (spatialAmbienceFastEnvelope - spatialAmbienceSlowEnvelope) /
+                        max(spatialAmbienceFastEnvelope, 0.0001f)
+                    ).coerceIn(0f, 1f)
+                val ambienceSource = ambienceBand * (1f - 0.75f * ambienceTransient)
+                val ambienceLeft = spatialAmbienceL2.process(
+                    spatialAmbienceL1.process(ambienceSource, ambienceDelayL1, cabinProfile.firstFeedback),
+                    ambienceDelayL2,
+                    cabinProfile.secondFeedback,
+                )
+                val ambienceRight = spatialAmbienceR2.process(
+                    spatialAmbienceR1.process(ambienceSource, ambienceDelayR1, cabinProfile.firstFeedback),
+                    ambienceDelayR2,
+                    cabinProfile.secondFeedback,
+                )
+                val ambienceCommon = (ambienceLeft + ambienceRight) * 0.175f
+                val ambienceSide = (ambienceLeft - ambienceRight) * 0.5f
+                left = midOut + sideOut + spatialMidAmbienceMix * (ambienceCommon + ambienceSide)
+                right = midOut - sideOut + spatialMidAmbienceMix * (ambienceCommon - ambienceSide)
             }
 
             output[index] = safeLimit(left)
@@ -433,12 +597,34 @@ class CarAudioProcessor(private val sampleRate: Int) {
     private fun resetSpatialState() {
         spatialLowSide = 0f
         spatialBodySide = 0f
+        spatialPunchLowMid = 0f
+        spatialPunchBodyMid = 0f
+        spatialPunchFastEnvelope = 0f
+        spatialPunchSlowEnvelope = 0f
+        spatialAmbienceLowMid = 0f
+        spatialAmbienceLowResidual = 0f
+        spatialAmbienceHighMid = 0f
+        spatialAmbienceFastEnvelope = 0f
+        spatialAmbienceSlowEnvelope = 0f
+        spatialSideAmbienceMix = 0f
+        spatialMidAmbienceMix = 0f
+        spatialStrengthControl = 0f
+        spatialFocusControl = 0f
         spatialAllPassA.reset()
         spatialAllPassB.reset()
+        spatialAmbienceL1.reset()
+        spatialAmbienceL2.reset()
+        spatialAmbienceR1.reset()
+        spatialAmbienceR2.reset()
     }
 
     private fun normalizedPercent(value: Float): Float {
         return if (value.isFinite()) value.coerceIn(0f, 100f) / 100f else 0f
+    }
+
+    private fun delaySamples(milliseconds: Float): Int {
+        return ((sampleRate * milliseconds / 1000f).toInt())
+            .coerceIn(1, spatialAmbienceMaxDelay - 1)
     }
 
     private fun onePoleCoefficient(cutoff: Float): Float {
@@ -459,6 +645,11 @@ class CarAudioProcessor(private val sampleRate: Int) {
 
     private fun smoothGain(previous: Float, target: Float, attack: Float, release: Float): Float {
         val coefficient = if (target < previous) attack else release
+        return previous + coefficient * (target - previous)
+    }
+
+    private fun smoothEnvelope(previous: Float, target: Float, attack: Float, release: Float): Float {
+        val coefficient = if (target > previous) attack else release
         return previous + coefficient * (target - previous)
     }
 
@@ -570,6 +761,54 @@ class CarAudioProcessor(private val sampleRate: Int) {
     }
 }
 
+private data class CabinProfile(
+    val leftFirstDelayMs: Float,
+    val leftSecondDelayMs: Float,
+    val rightFirstDelayMs: Float,
+    val rightSecondDelayMs: Float,
+    val firstFeedback: Float,
+    val secondFeedback: Float,
+    val highCutoffHz: Float,
+)
+
+private val COMPACT_CABIN_PROFILE = CabinProfile(
+    leftFirstDelayMs = 0.7f,
+    leftSecondDelayMs = 2.1f,
+    rightFirstDelayMs = 1.0f,
+    rightSecondDelayMs = 1.7f,
+    firstFeedback = 0.45f,
+    secondFeedback = 0.35f,
+    highCutoffHz = 6500f,
+)
+
+private val STANDARD_CABIN_PROFILE = CabinProfile(
+    leftFirstDelayMs = 0.9f,
+    leftSecondDelayMs = 3.1f,
+    rightFirstDelayMs = 1.4f,
+    rightSecondDelayMs = 2.65f,
+    firstFeedback = 0.50f,
+    secondFeedback = 0.40f,
+    highCutoffHz = 6000f,
+)
+
+private val LARGE_CABIN_PROFILE = CabinProfile(
+    leftFirstDelayMs = 1.5f,
+    leftSecondDelayMs = 4.85f,
+    rightFirstDelayMs = 2.0f,
+    rightSecondDelayMs = 4.1f,
+    firstFeedback = 0.55f,
+    secondFeedback = 0.45f,
+    highCutoffHz = 5200f,
+)
+
+private fun cabinProfile(size: Int): CabinProfile {
+    return when (size.coerceIn(0, 2)) {
+        0 -> COMPACT_CABIN_PROFILE
+        2 -> LARGE_CABIN_PROFILE
+        else -> STANDARD_CABIN_PROFILE
+    }
+}
+
 /** Sub-millisecond phase diffuser; unlike a Haas tap it has no isolated delayed copy. */
 private class FirstOrderAllPass(private val coefficient: Float) {
     private var previousInput = 0f
@@ -585,6 +824,27 @@ private class FirstOrderAllPass(private val coefficient: Float) {
     fun reset() {
         previousInput = 0f
         previousOutput = 0f
+    }
+}
+
+/** Allocation-free Schroeder all-pass with a selectable short delay. */
+private class VariableAllPass(maxDelay: Int) {
+    private val buffer = FloatArray(maxDelay)
+    private var writeIndex = 0
+
+    fun process(input: Float, delaySamples: Int, feedback: Float): Float {
+        var readIndex = writeIndex - delaySamples
+        if (readIndex < 0) readIndex += buffer.size
+        val delayed = buffer[readIndex]
+        val output = -feedback * input + delayed
+        buffer[writeIndex] = input + feedback * output
+        writeIndex = if (writeIndex + 1 == buffer.size) 0 else writeIndex + 1
+        return output
+    }
+
+    fun reset() {
+        buffer.fill(0f)
+        writeIndex = 0
     }
 }
 

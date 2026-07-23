@@ -123,6 +123,7 @@
     <string name="key_car_spatializer_strength" translatable="false">car_spatializer_strength</string>
     <string name="key_car_spatializer_front_focus" translatable="false">car_spatializer_front_focus</string>
     <string name="key_car_spatializer_envelopment" translatable="false">car_spatializer_envelopment</string>
+    <string name="key_car_spatializer_cabin_size" translatable="false">car_spatializer_cabin_size</string>
 
     <string name="key_compander_enable" translatable="false">compander_enable</string>
     <string name="key_compander_timeconstant" translatable="false">compander_timeconstant</string>

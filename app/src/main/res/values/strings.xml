@@ -120,7 +120,7 @@
     <string name="car_audio_mid_gain_reduction_title">Mid gain reduction</string>
     <string name="car_audio_high_gain_reduction_title">High gain reduction</string>
     <string name="car_audio_spatializer">Car spatializer</string>
-    <string name="car_audio_spatializer_summary">Forward stage and cabin envelopment for stereo music</string>
+    <string name="car_audio_spatializer_summary">Forward stage and cabin envelopment for stereo music; avoid stacking Stereo widen/Crossfeed</string>
     <string name="car_audio_spatializer_mode">Mode</string>
     <string name="car_audio_spatializer_off">Off</string>
     <string name="car_audio_spatializer_natural">Natural</string>
@@ -129,6 +129,10 @@
     <string name="car_audio_spatializer_strength">Strength</string>
     <string name="car_audio_spatializer_front_focus">Front focus</string>
     <string name="car_audio_spatializer_envelopment">Envelopment</string>
+    <string name="car_audio_spatializer_cabin_size">Cabin size</string>
+    <string name="car_audio_spatializer_cabin_compact">Compact / sedan</string>
+    <string name="car_audio_spatializer_cabin_standard">Wagon / small SUV</string>
+    <string name="car_audio_spatializer_cabin_large">Large SUV / minivan</string>
 
     <string name="compander_enable">Dynamic range compander</string>
     <string name="compander_timeconstant">Time constant</string>
