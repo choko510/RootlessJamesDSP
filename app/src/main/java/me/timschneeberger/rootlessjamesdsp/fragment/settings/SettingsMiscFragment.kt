@@ -5,9 +5,12 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Patterns
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
+import kotlinx.coroutines.launch
 import me.timschneeberger.rootlessjamesdsp.BuildConfig
+import me.timschneeberger.rootlessjamesdsp.MainApplication
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.activity.OnboardingActivity
 import me.timschneeberger.rootlessjamesdsp.api.AutoEqClient
@@ -15,7 +18,6 @@ import me.timschneeberger.rootlessjamesdsp.flavor.CrashlyticsImpl
 import me.timschneeberger.rootlessjamesdsp.preference.IconPreference
 import me.timschneeberger.rootlessjamesdsp.preference.MaterialSwitchPreference
 import me.timschneeberger.rootlessjamesdsp.utils.Constants
-import me.timschneeberger.rootlessjamesdsp.utils.extensions.AssetManagerExtensions.installPrivateAssets
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.showAlert
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.showYesNoAlert
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.toast
@@ -48,8 +50,24 @@ class SettingsMiscFragment : SettingsBaseFragment() {
         }
 
         repairAssets?.setOnPreferenceClickListener {
-            requireContext().assets.installPrivateAssets(requireContext(), force = true)
-            requireContext().showAlert(R.string.success, R.string.troubleshooting_repair_assets_success)
+            val context = requireContext()
+            repairAssets?.isEnabled = false
+            viewLifecycleOwner.lifecycleScope.launch {
+                val result = (context.applicationContext as MainApplication)
+                    .privateAssetInstaller
+                    .ensureInstalled(force = true)
+                repairAssets?.isEnabled = true
+                if (result.isSuccess) {
+                    context.showAlert(R.string.success, R.string.troubleshooting_repair_assets_success)
+                }
+                else {
+                    context.showAlert(
+                        context.getString(R.string.unknown_error),
+                        result.exceptionOrNull()?.localizedMessage
+                            ?: context.getString(R.string.filelibrary_access_fail)
+                    )
+                }
+            }
             true
         }
 

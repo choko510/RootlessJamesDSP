@@ -34,7 +34,7 @@ class BackupCreatorJob(private val context: Context, workerParams: WorkerParamet
             ?: preferences.get<String>(R.string.key_backup_location).toUri()
         val isAutoBackup = inputData.getBoolean(IS_AUTO_BACKUP_KEY, true)
 
-        notificationManager?.notify(Notifications.ID_BACKUP_PROGRESS, notifier.showBackupProgress().build())
+        notifier.showBackupProgress()
         return try {
             val location = BackupManager(context).createBackup(uri, isAutoBackup)
             if (!isAutoBackup) notifier.showBackupComplete(UniFile.fromUri(context, location.toUri()))

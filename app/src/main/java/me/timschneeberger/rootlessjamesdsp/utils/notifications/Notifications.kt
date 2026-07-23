@@ -11,6 +11,7 @@ import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.buildNotificationChannel
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.buildNotificationChannelGroup
 import me.timschneeberger.rootlessjamesdsp.utils.isRootless
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Class to manage the basic information of all the notifications used in the app.
@@ -47,6 +48,7 @@ object Notifications {
         "Permission prompt",
         "App incompatibility alert"
     )
+    private val channelsEnsured = AtomicBoolean(false)
 
     /**
      * Creates the notification channels introduced in Android Oreo.
@@ -54,8 +56,11 @@ object Notifications {
      *
      * @param context The application context.
      */
-    fun createChannels(context: Context) {
-        val notificationService = NotificationManagerCompat.from(context)
+    fun ensureChannels(context: Context) {
+        if (!channelsEnsured.compareAndSet(false, true))
+            return
+
+        val notificationService = NotificationManagerCompat.from(context.applicationContext)
 
         // Delete old notification channels
         deprecatedChannels.forEach(notificationService::deleteNotificationChannel)
@@ -114,4 +119,8 @@ object Notifications {
             )
         }
     }
+
+    /** Compatibility alias for older internal call sites. */
+    @Deprecated("Use ensureChannels at the notification or service entry point")
+    fun createChannels(context: Context) = ensureChannels(context)
 }

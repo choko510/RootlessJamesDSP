@@ -77,6 +77,8 @@ class RootAudioProcessorService : BaseAudioProcessorService(), KoinComponent,
     override fun onCreate() {
         super.onCreate()
 
+        Notifications.ensureChannels(this)
+
         // Register shared preferences listener
         preferences.registerOnSharedPreferenceChangeListener(this)
         app.rootSessionDatabase.registerOnSessionChangeListener(this)

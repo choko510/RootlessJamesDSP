@@ -12,6 +12,10 @@ import me.timschneeberger.rootlessjamesdsp.utils.notifications.Notifications
 
 class BackupNotifier(private val context: Context) {
 
+    init {
+        Notifications.ensureChannels(context)
+    }
+
     private val notificationManager = context.getSystemService<NotificationManager>()
 
     private val progressNotificationBuilder = NotificationCompat.Builder(context, Notifications.CHANNEL_BACKUP_RESTORE_PROGRESS).apply {

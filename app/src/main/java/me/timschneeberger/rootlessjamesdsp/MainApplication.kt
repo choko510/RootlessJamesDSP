@@ -7,7 +7,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.StrictMode
+import android.os.Trace
 import android.util.Log
 import androidx.appcompat.app.AppCompatDelegate
 import com.pluto.Pluto
@@ -21,7 +24,9 @@ import com.pluto.plugins.rooms.db.PlutoRoomsDBWatcher
 import com.pluto.plugins.rooms.db.PlutoRoomsDatabasePlugin
 import fr.bipi.tressence.file.FileLoggerTree
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import me.timschneeberger.rootlessjamesdsp.flavor.CrashlyticsImpl
 import me.timschneeberger.rootlessjamesdsp.flavor.UpdateManager
 import me.timschneeberger.rootlessjamesdsp.model.preference.ThemeMode
@@ -36,10 +41,10 @@ import me.timschneeberger.rootlessjamesdsp.utils.RoutingObserver
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.registerLocalReceiver
 import me.timschneeberger.rootlessjamesdsp.utils.isRoot
 import me.timschneeberger.rootlessjamesdsp.utils.isRootless
-import me.timschneeberger.rootlessjamesdsp.utils.notifications.Notifications
 import me.timschneeberger.rootlessjamesdsp.utils.preferences.Preferences
 import me.timschneeberger.rootlessjamesdsp.utils.sdkAbove
 import me.timschneeberger.rootlessjamesdsp.utils.storage.Cache
+import me.timschneeberger.rootlessjamesdsp.utils.storage.PrivateAssetInstaller
 import org.koin.android.ext.android.inject
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
@@ -52,6 +57,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 
 
 open class MainApplication : Application(), SharedPreferences.OnSharedPreferenceChangeListener {
@@ -72,8 +78,11 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
                 prefs.get<Boolean>(R.string.key_audioformat_enhanced_processing)
 
     private val applicationScope = CoroutineScope(SupervisorJob())
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val deferredStartupInitialized = AtomicBoolean(false)
     private val blockedAppDatabase by lazy { AppBlocklistDatabase.getDatabase(this, applicationScope) }
     val blockedAppRepository by lazy { AppBlocklistRepository(blockedAppDatabase.appBlocklistDao()) }
+    val privateAssetInstaller by lazy { PrivateAssetInstaller(this) }
 
     /* Rootless: Media projection auth token */
     var mediaProjectionStartIntent: Intent? = null
@@ -100,45 +109,18 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
     }
 
     override fun onCreate() {
+        Trace.beginSection("MainApplication.onCreate")
         instance = this
 
         Timber.plant(DebugTree())
 
         if(BuildConfig.DEBUG) {
             Timber.plant(PlutoTimberTree())
-            enableDebugTools()
         }
         if(!BuildConfig.FOSS_ONLY)
             Timber.plant(CrashReportingTree())
 
-        // Clean up
-        Cache.cleanup(this)
-
-        try {
-            Timber.plant(
-                FileLoggerTree.Builder()
-                    .withFileName("application.log")
-                    .withDirName(this.cacheDir.absolutePath)
-                    .withMinPriority(Log.VERBOSE)
-                    .withSizeLimit(2 * 1000000)
-                    .withFileLimit(1)
-                    .appendToFile(false)
-                    .build()
-            )
-        }
-        catch (ex: Exception) {
-            // Log file creation may fail
-            Timber.e(ex)
-        }
-
         Timber.i("====> Application starting up")
-
-        val dumpFile = File(filesDir, "dump.txt")
-        if(dumpFile.exists()) {
-            dumpFile.delete()
-        }
-
-        Notifications.createChannels(this)
 
         val appModule = module {
             single { RoutingObserver(androidContext()) }
@@ -167,19 +149,6 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
             Timber.d("Crashlytics enabled? $crashlytics")
             CrashlyticsImpl.setCollectionEnabled(crashlytics)
 
-            CrashlyticsImpl.setCustomKey("buildType", BuildConfig.BUILD_TYPE)
-            CrashlyticsImpl.setCustomKey("buildCommit", BuildConfig.COMMIT_SHA)
-            CrashlyticsImpl.setCustomKey("flavor", BuildConfig.FLAVOR)
-            try {
-                CrashlyticsImpl.setCustomKey(
-                    "language",
-                    resources.configuration.locales.get(0).language
-                )
-            }
-            catch (ex: Exception) {
-                // Just in case the locale array is empty
-                Timber.e(ex)
-            }
         }
 
         /**
@@ -217,6 +186,82 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
             Timber.i(ex)
         }
         super.onCreate()
+        scheduleDeferredStartupFallback()
+        Trace.endSection()
+    }
+
+    /** Called by MainActivity after its first frame is visible. */
+    fun onMainActivityFirstDrawn() {
+        if (deferredStartupInitialized.compareAndSet(false, true)) {
+            mainHandler.removeCallbacks(deferredStartupRunnable)
+            mainHandler.post { initializeDeferredStartup() }
+        }
+    }
+
+    private val deferredStartupRunnable = Runnable { onMainActivityFirstDrawn() }
+
+    private fun scheduleDeferredStartupFallback() {
+        // Services and receivers can start the process without ever opening an Activity. Keep the
+        // diagnostic and maintenance work available in that case, but never put it on the cold UI
+        // path.
+        mainHandler.postDelayed(deferredStartupRunnable, DEFERRED_STARTUP_FALLBACK_MS)
+    }
+
+    private fun initializeDeferredStartup() {
+        Trace.beginSection("MainApplication.deferredStartup")
+        try {
+            if (BuildConfig.DEBUG)
+                enableDebugTools()
+
+            try {
+                Timber.plant(
+                    FileLoggerTree.Builder()
+                        .withFileName("application.log")
+                        .withDirName(cacheDir.absolutePath)
+                        .withMinPriority(Log.VERBOSE)
+                        .withSizeLimit(2 * 1000000)
+                        .withFileLimit(1)
+                        .appendToFile(false)
+                        .build()
+                )
+            }
+            catch (ex: Exception) {
+                // Log file creation may fail
+                Timber.e(ex)
+            }
+
+            if (!BuildConfig.FOSS_ONLY) {
+                CrashlyticsImpl.setCustomKey("buildType", BuildConfig.BUILD_TYPE)
+                CrashlyticsImpl.setCustomKey("buildCommit", BuildConfig.COMMIT_SHA)
+                CrashlyticsImpl.setCustomKey("flavor", BuildConfig.FLAVOR)
+                try {
+                    CrashlyticsImpl.setCustomKey(
+                        "language",
+                        resources.configuration.locales.get(0).language
+                    )
+                }
+                catch (ex: Exception) {
+                    // Just in case the locale array is empty
+                    Timber.e(ex)
+                }
+            }
+
+            applicationScope.launch(Dispatchers.IO) {
+                Trace.beginSection("MainApplication.deferredMaintenance")
+                try {
+                    Cache.cleanup(this@MainApplication)
+                    val dumpFile = File(filesDir, "dump.txt")
+                    if (dumpFile.exists())
+                        dumpFile.delete()
+                }
+                finally {
+                    Trace.endSection()
+                }
+            }
+        }
+        finally {
+            Trace.endSection()
+        }
     }
 
     override fun onTerminate() {
@@ -322,6 +367,8 @@ open class MainApplication : Application(), SharedPreferences.OnSharedPreference
 
 
     companion object {
+        private const val DEFERRED_STARTUP_FALLBACK_MS = 2_000L
+
         lateinit var instance: MainApplication
             private set
     }

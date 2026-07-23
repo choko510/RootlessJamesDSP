@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.PersistableBundle
+import android.os.Trace
 import android.view.HapticFeedbackConstants
 import android.widget.CheckBox
 import android.widget.LinearLayout
@@ -39,7 +40,6 @@ import me.timschneeberger.rootlessjamesdsp.BuildConfig
 import me.timschneeberger.rootlessjamesdsp.MainApplication
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.databinding.ActivityDspMainBinding
-import me.timschneeberger.rootlessjamesdsp.databinding.ContentMainBinding
 import me.timschneeberger.rootlessjamesdsp.flavor.CrashlyticsImpl
 import me.timschneeberger.rootlessjamesdsp.flavor.UpdateManager
 import me.timschneeberger.rootlessjamesdsp.fragment.DspFragment
@@ -56,7 +56,6 @@ import me.timschneeberger.rootlessjamesdsp.service.RootlessAudioProcessorService
 import me.timschneeberger.rootlessjamesdsp.utils.Constants
 import me.timschneeberger.rootlessjamesdsp.utils.Result
 import me.timschneeberger.rootlessjamesdsp.utils.SdkCheck
-import me.timschneeberger.rootlessjamesdsp.utils.extensions.AssetManagerExtensions.installPrivateAssets
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.broadcastPresetLoadEvent
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.check
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.getAppName
@@ -88,8 +87,8 @@ import kotlin.concurrent.schedule
 class MainActivity : BaseActivity() {
     /* UI bindings */
     lateinit var binding: ActivityDspMainBinding
-    private lateinit var bindingContent: ContentMainBinding
     private lateinit var dspFragment: DspFragment
+    private var fullDrawnReported = false
 
     /* Rootless version */
     private lateinit var mediaProjectionManager: MediaProjectionManager
@@ -148,11 +147,19 @@ class MainActivity : BaseActivity() {
         }
 
         val firstBoot = prefsVar.get<Boolean>(R.string.key_first_boot)
-        assets.installPrivateAssets(this, force = firstBoot)
 
-        mediaProjectionManager = getSystemService<MediaProjectionManager>()!!
-        binding = ActivityDspMainBinding.inflate(layoutInflater)
-        bindingContent = ContentMainBinding.inflate(layoutInflater)
+        // Permission recovery must win over every expensive main-screen operation. In particular,
+        // do not inflate the activity, create cards, or start the private asset installer when the
+        // only useful result is the onboarding screen.
+        if (SdkCheck.isQ && isRootless() && (!hasDumpPermission() || !hasRecordPermission())) {
+            Timber.i("Launching onboarding (first boot: $firstBoot)")
+
+            startActivity(Intent(this, OnboardingActivity::class.java).apply {
+                putExtra(OnboardingActivity.EXTRA_FIX_PERMS, !firstBoot)
+            })
+            finish()
+            return
+        }
 
         val check = applicationContext.check()
         if(check != 0) {
@@ -161,6 +168,11 @@ class MainActivity : BaseActivity() {
             quitGracefully()
             return
         }
+
+        mediaProjectionManager = getSystemService<MediaProjectionManager>()!!
+        Trace.beginSection("MainActivity.inflate")
+        binding = ActivityDspMainBinding.inflate(layoutInflater)
+        Trace.endSection()
 
         // Setup views
         setContentView(binding.root)
@@ -176,25 +188,30 @@ class MainActivity : BaseActivity() {
             prefsVar.set(R.string.key_snooze_translation_notice, (System.currentTimeMillis() / 1000L) + 1800L)
         }
 
-        // Load main fragment
-        dspFragment = DspFragment.newInstance()
-        if(!hasLoadFailed)
-            supportFragmentManager.beginTransaction()
-                .replace(R.id.dsp_fragment_container, dspFragment)
-                .commit()
+        // The container is intentionally empty in XML. Reuse a restored DspFragment and add it
+        // exactly once; this avoids NavHostFragment inflation followed by a second replacement.
+        if(!hasLoadFailed) {
+            val existing = supportFragmentManager.findFragmentByTag(MAIN_FRAGMENT_TAG)
+                ?: supportFragmentManager.findFragmentById(R.id.dsp_fragment_container)
+            dspFragment = when (existing) {
+                is DspFragment -> existing
+                null -> DspFragment.newInstance().also {
+                    supportFragmentManager.beginTransaction()
+                        .add(R.id.dsp_fragment_container, it, MAIN_FRAGMENT_TAG)
+                        .commitNow()
+                }
+                else -> DspFragment.newInstance().also {
+                    // One-time migration for state restored from versions that used NavHostFragment.
+                    supportFragmentManager.beginTransaction()
+                        .replace(R.id.dsp_fragment_container, it, MAIN_FRAGMENT_TAG)
+                        .commitNow()
+                }
+            }
+            dspFragment.setOnInitialDrawListener(::onMainContentInitialDrawn)
+            dspFragment.setOnCardsReadyListener(::reportFullyDrawnOnce)
+        }
         else
             showLibraryLoadError()
-
-        // Rootless: Check permissions and launch onboarding if required
-        if(SdkCheck.isQ && isRootless() && (!hasDumpPermission() || !hasRecordPermission())) {
-            Timber.i("Launching onboarding (first boot: $firstBoot)")
-
-            startActivity(Intent(this, OnboardingActivity::class.java).apply {
-                putExtra(OnboardingActivity.EXTRA_FIX_PERMS, !firstBoot)
-            })
-            this.finish()
-            return
-        }
 
         // Inflate bottom left menu
         menuInflater.inflate(R.menu.menu_main_bottom_left, binding.leftMenu.menu)
@@ -385,9 +402,11 @@ class MainActivity : BaseActivity() {
 
         showAndroid15Alert()
 
-        dspFragment.setUpdateCardOnClick { updateManager.installUpdate(this) }
-        dspFragment.setUpdateCardOnCloseClick(::dismissUpdate)
-        checkForUpdates()
+        if (::dspFragment.isInitialized) {
+            dspFragment.setUpdateCardOnClick { updateManager.installUpdate(this) }
+            dspFragment.setUpdateCardOnCloseClick(::dismissUpdate)
+            checkForUpdates()
+        }
 
         // Handle potential incoming file intent
         if(intent?.action == Intent.ACTION_VIEW) {
@@ -396,6 +415,11 @@ class MainActivity : BaseActivity() {
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
+        if (!::binding.isInitialized) {
+            super.onSharedPreferenceChanged(sharedPreferences, key)
+            return
+        }
+
         if(key == getString(R.string.key_appearance_nav_hide)) {
             binding.bar.hideOnScroll = prefsApp.get(R.string.key_appearance_nav_hide)
         }
@@ -577,10 +601,13 @@ class MainActivity : BaseActivity() {
 
         hasLoadFailed = true
 
-        supportFragmentManager
-            .beginTransaction()
-            .replace(R.id.dsp_fragment_container, LibraryLoadErrorFragment.newInstance())
-            .commit()
+        val existing = supportFragmentManager.findFragmentByTag(LIBRARY_ERROR_TAG)
+            ?: supportFragmentManager.findFragmentById(R.id.dsp_fragment_container)
+        if (existing !is LibraryLoadErrorFragment) {
+            supportFragmentManager.beginTransaction()
+                .replace(R.id.dsp_fragment_container, LibraryLoadErrorFragment.newInstance(), LIBRARY_ERROR_TAG)
+                .commit()
+        }
 
         binding.powerToggle.isToggled = false
         binding.toolbar.isVisible = false
@@ -781,6 +808,27 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    private fun onMainContentInitialDrawn() {
+        app.onMainActivityFirstDrawn()
+
+        // Asset installation is deliberately kicked off only after the first frame. The installer
+        // owns a single IO job, so a file picker or repair action can safely join the same work.
+        CoroutineScope(Dispatchers.IO).launch {
+            val result = app.privateAssetInstaller.ensureInstalled(force = false)
+            result.exceptionOrNull()?.let { Timber.e(it, "Private asset installation failed") }
+        }
+    }
+
+    private fun reportFullyDrawnOnce() {
+        if (fullDrawnReported)
+            return
+
+        fullDrawnReported = true
+        Trace.beginSection("MainActivity.reportFullyDrawn")
+        reportFullyDrawn()
+        Trace.endSection()
+    }
+
     class FakePresetFragment : Fragment(), TargetFragment {
         val pref by lazy {
             FileLibraryPreference(requireContext(), null).apply {
@@ -805,6 +853,8 @@ class MainActivity : BaseActivity() {
         const val EXTRA_FORCE_SHOW_CAPTURE_PROMPT = "ForceShowCapturePrompt"
 
         private val DEBUG_IGNORE_MISSING_LIBRARY = BuildConfig.DEBUG
+        private const val MAIN_FRAGMENT_TAG = "main_dsp_fragment"
+        private const val LIBRARY_ERROR_TAG = "library_load_error"
         private const val STATE_LOAD_FAILED = "LoadFailed"
     }
 }

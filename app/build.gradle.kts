@@ -6,6 +6,7 @@ plugins {
     id("kotlin-kapt")
     id("com.google.gms.google-services")
     id("com.google.firebase.crashlytics")
+    id("androidx.baselineprofile")
     id("com.google.devtools.ksp") version AndroidConfig.kspVersion
     id("dev.rikka.tools.refine") version AndroidConfig.rikkaRefineVersion
     id("org.jetbrains.kotlin.plugin.serialization") version "2.1.0"
@@ -175,6 +176,8 @@ afterEvaluate {
 }
 
 dependencies {
+    baselineProfile(project(":macrobenchmark"))
+
     // Kotlin extensions
     implementation("org.jetbrains.kotlin:kotlin-reflect:2.0.20")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")

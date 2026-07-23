@@ -157,6 +157,8 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     override fun onCreate() {
         super.onCreate()
 
+        Notifications.ensureChannels(this)
+
         // Get reference to system services
         audioManager = getSystemService<AudioManager>()!!
         mediaProjectionManager = getSystemService<MediaProjectionManager>()!!

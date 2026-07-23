@@ -5,8 +5,13 @@ import android.content.res.TypedArray
 import android.util.AttributeSet
 import androidx.preference.ListPreference
 import androidx.preference.Preference.SummaryProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import me.timschneeberger.rootlessjamesdsp.MainApplication
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.model.preset.Preset
+import me.timschneeberger.rootlessjamesdsp.utils.storage.PrivateAssetInstaller
 import me.timschneeberger.rootlessjamesdsp.utils.extensions.ContextExtensions.toast
 import timber.log.Timber
 import java.io.File
@@ -58,8 +63,24 @@ class FileLibraryPreference(context: Context, attrs: AttributeSet?) :
     }
 
     override fun onClick() {
-        refresh()
-        super.onClick()
+        val installer = privateAssetInstaller()
+        if (installer != null && installer.state.value != PrivateAssetInstaller.State.Ready) {
+            // A card may be visible while the post-first-frame asset copy is still running. Do not
+            // open an empty list; wait for the shared installer job and then open the picker.
+            CoroutineScope(Dispatchers.Main).launch {
+                val result = installer.ensureInstalled(force = false)
+                if (result.isSuccess) {
+                    refreshNow()
+                    openDialog()
+                }
+                else {
+                    context.toast(context.getString(R.string.filelibrary_access_fail), false)
+                }
+            }
+            return
+        }
+
+        openDialog()
     }
 
     fun showDialog() {
@@ -74,8 +95,33 @@ class FileLibraryPreference(context: Context, attrs: AttributeSet?) :
             return
         }
 
+        val installer = privateAssetInstaller()
+        if (installer == null || installer.state.value == PrivateAssetInstaller.State.Ready) {
+            refreshNow()
+            return
+        }
+
+        CoroutineScope(Dispatchers.Main).launch {
+            if (installer.ensureInstalled(force = false).isSuccess)
+                refreshNow()
+        }
+    }
+
+    private fun openDialog() {
+        refreshNow()
+        super.onClick()
+    }
+
+    private fun refreshNow() {
+        if (directory == null) {
+            context.toast(context.getString(R.string.filelibrary_access_fail), false)
+            return
+        }
         initFileList()
     }
+
+    private fun privateAssetInstaller(): PrivateAssetInstaller? =
+        (context.applicationContext as? MainApplication)?.privateAssetInstaller
 
     private fun initFileList() {
         val result = hashMapOf<String, String>()

@@ -9,11 +9,12 @@
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
 .DS_Store
-/build
+build/
 /captures
 .externalNativeBuild
 .cxx
 local.properties
-/hidden-refine-api/build/
+.codex/
+
 /app/src/main/cpp/libjamesdsp/Main/DSPManager/.idea
 /app/src/main/cpp/libjamesdsp/Main/DSPManager/DSPManager.iml
