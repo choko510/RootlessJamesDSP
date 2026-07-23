@@ -177,16 +177,18 @@ class CarAudioProcessor(private val sampleRate: Int) {
     @Volatile
     private var highGainReductionDb = 0f
     private var spatialLowSide = 0f
-    private var delay: FloatArray = FloatArray(max(1, (sampleRate * 0.04f).toInt()))
-    private var delayIndex = 0
+    private var spatialBodySide = 0f
+    private var spatialWasEnabled = false
+    private val spatialAllPassA = FirstOrderAllPass(0.62f)
+    private val spatialAllPassB = FirstOrderAllPass(-0.38f)
     private var floatInputScratch = FloatArray(0)
     private var floatOutputScratch = FloatArray(0)
 
-    // The car contour follows the plan's 100 Hz low shelf and 8 kHz high shelf. Spatial M/S
-    // widening keeps the 120 Hz-and-below region mono-protected.
+    // The car contour follows the plan's 100 Hz low shelf and 8 kHz high shelf.
     private val loudnessLow = onePoleCoefficient(100f)
     private val loudnessHigh = onePoleCoefficient(8000f)
-    private val spatialLow = onePoleCoefficient(120f)
+    private val spatialLow = onePoleCoefficient(160f)
+    private val spatialBody = onePoleCoefficient(6500f)
     private val loudnessAttack = timeCoefficient(150f)
     private val loudnessRelease = timeCoefficient(750f)
 
@@ -233,6 +235,10 @@ class CarAudioProcessor(private val sampleRate: Int) {
         val current = settings
         val spatialMode = current.spatializer.mode.coerceIn(0, 3)
         val spatialEnabled = current.spatializer.enabled && spatialMode != 0
+        if (spatialEnabled != spatialWasEnabled) {
+            resetSpatialState()
+            spatialWasEnabled = spatialEnabled
+        }
         if (!current.loudness.enabled && !current.compressor.enabled && !spatialEnabled) {
             gainReductionDb = 0f
             lowGainReductionDb = 0f
@@ -270,24 +276,22 @@ class CarAudioProcessor(private val sampleRate: Int) {
         val highReleaseCoeff = timeCoefficient(comp.high.releaseMs)
 
         val spatial = current.spatializer
-        val spatialStrengthPercent = when (spatialMode) {
-            2 -> max(spatial.strength, 60f)
-            3 -> max(spatial.strength, 80f)
-            else -> spatial.strength
-        }.coerceIn(0f, 100f)
-        val spatialEnvelopePercent = when (spatialMode) {
-            1 -> max(spatial.envelopment, 20f)
-            2 -> max(spatial.envelopment, 40f)
-            3 -> max(spatial.envelopment, 70f)
-            else -> spatial.envelopment
-        }.coerceIn(0f, 100f)
-        val spatialStrength = if (spatialEnabled) {
-            spatialStrengthPercent / 100f
-        } else 0f
-        val focus = if (spatialEnabled) spatial.frontFocus.coerceIn(0f, 100f) / 100f else 0f
-        val envelope = if (spatialEnabled) spatialEnvelopePercent / 100f else 0f
-        val delaySamples = ((sampleRate * (0.005f + 0.015f * envelope)).toInt())
-            .coerceIn(1, delay.lastIndex.coerceAtLeast(1))
+        val spatialStrength = if (spatialEnabled) normalizedPercent(spatial.strength) else 0f
+        val focus = if (spatialEnabled) normalizedPercent(spatial.frontFocus) else 0f
+        val envelope = if (spatialEnabled) normalizedPercent(spatial.envelopment) else 0f
+        val strengthCurve = spatialStrength * (0.65f + 0.35f * spatialStrength)
+        val widthAmount = strengthCurve * when (spatialMode) {
+            1 -> 0.20f
+            2 -> 0.42f
+            3 -> 0.58f
+            else -> 0f
+        }
+        val ambienceMix = envelope * when (spatialMode) {
+            1 -> 0.10f
+            2 -> 0.16f
+            3 -> 0.22f
+            else -> 0f
+        }
 
         var maxGainReduction = 0f
         var maxLowGainReduction = 0f
@@ -363,36 +367,32 @@ class CarAudioProcessor(private val sampleRate: Int) {
             }
 
             if (spatialEnabled) {
-                val dryLeft = left
-                val dryRight = right
-                try {
-                    val mid = (left + right) * 0.5f
-                    val side = (left - right) * 0.5f
-                    val lowSide = spatialLowSide + spatialLow * (side - spatialLowSide)
-                    spatialLowSide = lowSide
-                    val highSide = side - lowSide
-                    // Keep the one-sample fallback safe as well (useful during defensive startup
-                    // tests with an invalid/zero sample rate).
-                    val delayedIndex = if (delay.size <= 1) 0 else
-                        (delayIndex - delaySamples + delay.size) % delay.size
-                    val delayedSide = delay[delayedIndex]
-                    delay[delayIndex] = side
-                    delayIndex = if (delay.size <= 1) 0 else (delayIndex + 1) % delay.size
+                val mid = (left + right) * 0.5f
+                val side = (left - right) * 0.5f
+                val lowSide = spatialLowSide + spatialLow * (side - spatialLowSide)
+                spatialLowSide = lowSide
+                val lowAndBodySide = spatialBodySide + spatialBody * (side - spatialBodySide)
+                spatialBodySide = lowAndBodySide
+                val bodySide = lowAndBodySide - lowSide
+                val airSide = side - lowAndBodySide
 
-                    val lowWidth = 1f - 0.5f * spatialStrength
-                    val highWidth = 1f + 0.8f * spatialStrength
-                    val sideOut = lowSide * lowWidth + highSide * highWidth + delayedSide * (0.15f * envelope)
-                    val midOut = mid * (1f + 0.12f * focus)
-                    left = midOut + sideOut
-                    right = midOut - sideOut
-                } catch (_: RuntimeException) {
-                    // A malformed legacy preference must not tear down the audio service. The
-                    // current frame remains dry and state is reset for the next block.
-                    left = dryLeft
-                    right = dryRight
-                    spatialLowSide = 0f
-                    delayIndex = 0
-                }
+                // Keep bass and upper treble stable, where large antiphase boosts are most
+                // fatiguing. Front focus narrows only the body expansion instead of raising the
+                // center level, so vocals stay forward without increasing loudness.
+                val lowWidth = 1f - 0.08f * strengthCurve
+                val bodyWidth = 1f - 0.15f * focus + widthAmount * (1f - 0.35f * focus)
+                val airWidth = 1f + 0.45f * widthAmount
+
+                // Short all-pass diffusion changes phase without adding the previous 5–20 ms
+                // discrete Side echo. Its contribution is deliberately bounded per mode.
+                val ambienceInput = bodySide + 0.35f * airSide
+                val diffusedSide = spatialAllPassB.process(spatialAllPassA.process(ambienceInput))
+                val sideOut = lowSide * lowWidth +
+                    bodySide * bodyWidth +
+                    airSide * airWidth +
+                    (diffusedSide - ambienceInput) * ambienceMix
+                left = mid + sideOut
+                right = mid - sideOut
             }
 
             output[index] = safeLimit(left)
@@ -428,6 +428,17 @@ class CarAudioProcessor(private val sampleRate: Int) {
             floatInputScratch = FloatArray(size)
             floatOutputScratch = FloatArray(size)
         }
+    }
+
+    private fun resetSpatialState() {
+        spatialLowSide = 0f
+        spatialBodySide = 0f
+        spatialAllPassA.reset()
+        spatialAllPassB.reset()
+    }
+
+    private fun normalizedPercent(value: Float): Float {
+        return if (value.isFinite()) value.coerceIn(0f, 100f) / 100f else 0f
     }
 
     private fun onePoleCoefficient(cutoff: Float): Float {
@@ -556,6 +567,24 @@ class CarAudioProcessor(private val sampleRate: Int) {
                 if (treble) (1f / 3f) * (1f - t) else 0.5f * (1f - t)
             }
         }
+    }
+}
+
+/** Sub-millisecond phase diffuser; unlike a Haas tap it has no isolated delayed copy. */
+private class FirstOrderAllPass(private val coefficient: Float) {
+    private var previousInput = 0f
+    private var previousOutput = 0f
+
+    fun process(input: Float): Float {
+        val output = -coefficient * input + previousInput + coefficient * previousOutput
+        previousInput = input
+        previousOutput = output
+        return output
+    }
+
+    fun reset() {
+        previousInput = 0f
+        previousOutput = 0f
     }
 }
 

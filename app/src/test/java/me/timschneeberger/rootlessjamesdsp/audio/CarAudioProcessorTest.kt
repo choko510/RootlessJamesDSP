@@ -108,7 +108,122 @@ class CarAudioProcessorTest {
         }
         val output = FloatArray(stereoInput.size)
         processor.process(stereoInput, output)
-        for (i in output.indices step 2) assertEquals(output[i], output[i + 1], 0.0001f)
+        for (i in output.indices step 2) {
+            assertEquals(output[i], output[i + 1], 0.0001f)
+            assertEquals(input[i / 2], output[i], 0.0001f)
+        }
+    }
+
+    @Test
+    fun zeroStrengthAndEnvelopmentAreTransparentInEveryMode() {
+        val input = FloatArray(9_600) { i ->
+            if (i % 2 == 0) {
+                (0.1 * kotlin.math.sin(2.0 * Math.PI * 700.0 * (i / 2) / 48_000.0)).toFloat()
+            } else {
+                (0.08 * kotlin.math.sin(2.0 * Math.PI * 1_300.0 * (i / 2) / 48_000.0)).toFloat()
+            }
+        }
+        for (mode in 1..3) {
+            val processor = CarAudioProcessor(48_000)
+            processor.update(CarAudioSettings(
+                spatializer = CarSpatializerSettings(
+                    enabled = true,
+                    mode = mode,
+                    strength = 0f,
+                    frontFocus = 0f,
+                    envelopment = 0f,
+                ),
+            ))
+            val output = FloatArray(input.size)
+            processor.process(input, output)
+            for (i in input.indices) assertEquals(input[i], output[i], 0.000001f)
+        }
+    }
+
+    @Test
+    fun immersiveStrengthProducesAudibleButBoundedWidth() {
+        val processor = CarAudioProcessor(48_000)
+        processor.update(CarAudioSettings(
+            spatializer = CarSpatializerSettings(
+                enabled = true,
+                mode = 3,
+                strength = 100f,
+                frontFocus = 0f,
+                envelopment = 0f,
+            ),
+        ))
+        val input = FloatArray(48_000) { i ->
+            val sample = (0.12 * kotlin.math.sin(2.0 * Math.PI * 1_000.0 * (i / 2) / 48_000.0)).toFloat()
+            if (i % 2 == 0) sample else -sample
+        }
+        val output = FloatArray(input.size)
+        processor.process(input, output)
+        val widthRatio = rms(output, output.size / 2) / rms(input, input.size / 2)
+        assertTrue("widthRatio=$widthRatio", widthRatio > 1.4f)
+        assertTrue("widthRatio=$widthRatio", widthRatio < 1.7f)
+    }
+
+    @Test
+    fun spatializerPreservesTheCenterSignalAtMaximumSettings() {
+        val processor = CarAudioProcessor(48_000)
+        processor.update(CarAudioSettings(
+            spatializer = CarSpatializerSettings(
+                enabled = true,
+                mode = 3,
+                strength = 100f,
+                frontFocus = 100f,
+                envelopment = 100f,
+            ),
+        ))
+        val input = FloatArray(9_600) { i ->
+            if (i % 2 == 0) {
+                (0.05 * kotlin.math.sin(2.0 * Math.PI * 700.0 * (i / 2) / 48_000.0)).toFloat()
+            } else {
+                (0.05 * kotlin.math.sin(2.0 * Math.PI * 1_300.0 * (i / 2) / 48_000.0)).toFloat()
+            }
+        }
+        val output = FloatArray(input.size)
+        processor.process(input, output)
+        for (i in input.indices step 2) {
+            val inputCenter = (input[i] + input[i + 1]) * 0.5f
+            val outputCenter = (output[i] + output[i + 1]) * 0.5f
+            assertEquals(inputCenter, outputCenter, 0.000001f)
+        }
+    }
+
+    @Test
+    fun envelopmentDiffusesEarlyWithoutCreatingAHaasEcho() {
+        val spatialSettings = CarSpatializerSettings(
+            enabled = true,
+            mode = 3,
+            strength = 0f,
+            frontFocus = 0f,
+            envelopment = 100f,
+        )
+        val processor = CarAudioProcessor(48_000)
+        processor.update(CarAudioSettings(spatializer = spatialSettings))
+        val dryProcessor = CarAudioProcessor(48_000)
+        dryProcessor.update(CarAudioSettings(
+            spatializer = spatialSettings.copy(envelopment = 0f),
+        ))
+        val input = FloatArray(3_000)
+        input[0] = 0.2f
+        val output = FloatArray(input.size)
+        val dryOutput = FloatArray(input.size)
+        processor.process(input, output)
+        dryProcessor.process(input, dryOutput)
+
+        var earlyDifference = 0f
+        for (i in 0 until 128) {
+            earlyDifference = maxOf(earlyDifference, abs(output[i] - dryOutput[i]))
+        }
+        assertTrue("earlyDifference=$earlyDifference", earlyDifference > 0.005f)
+
+        var latePeak = 0f
+        for (frame in 192 until 1_200) {
+            latePeak = maxOf(latePeak, abs(output[2 * frame]), abs(output[2 * frame + 1]))
+        }
+        assertTrue("latePeak=$latePeak", latePeak < 0.001f)
     }
 
     @Test
