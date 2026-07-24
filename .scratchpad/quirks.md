@@ -21,10 +21,24 @@
 - Workaround: Check `macrobenchmark/build/outputs/connected_android_test_additional_output/**/benchmarkData.json` and logcat before treating the run as a test failure.
 - Status: Applies to this execution environment.
 
+## Car Audio macrobenchmark setup is sensitive to emulator task state
+
+- Environment: API 34 emulator using the benchmark release package.
+- Symptom: The Car Audio trace scenario can fail before setup with `Rootless power toggle did not appear` while the launcher/task state is stale; this is independent of Kotlin compilation and native build success.
+- Workaround: Force-stop the measured package, inspect `dumpsys activity`/logcat, and rerun after returning to MainActivity. Treat the scenario as unverified until its trace JSON is produced.
+- Status: Applies to this execution environment.
+
 ## Git may reject repository checks when ownership differs
 
 - Environment: Windows Codex sandbox with the repository owned by a different Windows user identity.
 - Symptom: Git reports `detected dubious ownership` for this repository.
 - Cause: Git's `safe.directory` ownership protection.
 - Workaround: Use a repository-scoped `-c safe.directory=<repository path>` option for read-only Git checks; do not change global Git configuration for this project.
+- Status: Applies to this execution environment.
+
+## Native Phase 3 changes need a full ABI rebuild
+
+- Environment: Windows Android build with the libjamesdsp gitlink checked out at the reviewed Phase 3 commit.
+- Symptom: Kotlin-only tasks can remain up-to-date while native source changes are not exercised.
+- Workaround: Run `:app:externalNativeBuildRootlessFullDebug` and the targeted connected instrumentation tests after changing the submodule.
 - Status: Applies to this execution environment.

@@ -20,10 +20,10 @@ class CarAudioProcessorTest {
 
     @Test
     fun fastPowerToDbStaysWithinReferenceTolerance() {
-        val powers = floatArrayOf(1.0e-12f, 1.0e-9f, 1.0e-6f, 0.001f, 0.01f, 0.1f, 0.5f, 1f, 2f, 4f)
+        val powers = floatArrayOf(1.0e-12f, 1.0e-9f, 1.0e-6f, 0.001f, 0.01f, 0.1f, 0.5f, 1f, 2f, 4f, 10f, 100f)
         for (power in powers) {
             val expected = (10.0 * ln(power.toDouble()) / ln(10.0)).toFloat()
-            assertEquals("power=$power", expected, FastAudioMath.powerToDb(power), 0.01f)
+            assertEquals("power=$power", expected.coerceIn(-120f, 12f), FastAudioMath.powerToDb(power), 0.01f)
         }
     }
 

@@ -16,9 +16,17 @@ An Android macrobenchmark's instrumentation context belongs to the benchmark APK
 
 `TraceSectionMetric` can capture an optional section with zero occurrences, but the AndroidX result formatter may fail while writing the JSON. Keep optional metrics out of the standard disabled scenario and inspect the trace directly for absence checks.
 
+## Verify LUT clamps at both normal and over-range powers
+
+Kotlin member-call syntax can bind a chained `coerceIn` to the LUT constant instead of the full arithmetic expression when the multiplication is split across lines. Keep the complete product parenthesized and test values above the intended dB ceiling.
+
 ## Reverb output is not deterministic across fresh native handles
 
 The native Reverb path seeds internal state from a static/random source, so cross-handle bit-for-bit PCM comparisons are invalid. In-place regression coverage should use deterministic effects for exact comparisons and finite/output-bound checks for stochastic effects.
+
+## Release native effect state only after realtime users drain
+
+Removing a mutex from a DSP sample loop requires a quiescence mechanism, not just a local pointer copy. Increment the processing-user count while the state is still locked, decrement it after the loop, and make control-thread replacement/destruction wait on that count.
 
 ## Spatial controls need signal-level invariants
 

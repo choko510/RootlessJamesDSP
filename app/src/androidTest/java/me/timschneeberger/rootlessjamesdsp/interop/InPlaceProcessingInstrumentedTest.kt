@@ -75,6 +75,32 @@ class InPlaceProcessingInstrumentedTest {
     }
 
     @Test
+    fun floatInPlaceWithOffsetKeepsTheProcessedRegionAligned() {
+        val separateHandle = JamesDspWrapper.alloc(TestCallbacks)
+        val inPlaceHandle = JamesDspWrapper.alloc(TestCallbacks)
+        assertTrue(separateHandle != 0L && inPlaceHandle != 0L)
+        try {
+            assertTrue(JamesDspWrapper.setPostGain(separateHandle, -6f))
+            assertTrue(JamesDspWrapper.setPostGain(inPlaceHandle, -6f))
+            val offset = 128
+            val length = 1024
+            val input = FloatArray(offset + length + 128) { index -> ((index % 47) - 23) / 30f }
+            val expectedSegment = input.copyOfRange(offset, offset + length)
+            val actual = input.copyOf()
+
+            JamesDspWrapper.processFloat(separateHandle, expectedSegment, expectedSegment)
+            JamesDspWrapper.processFloat(inPlaceHandle, actual, actual, offset, length)
+
+            assertArrayEquals(expectedSegment, actual.copyOfRange(offset, offset + length), 1.0e-5f)
+            assertArrayEquals(input.copyOfRange(0, offset), actual.copyOfRange(0, offset), 0f)
+            assertArrayEquals(input.copyOfRange(offset + length, input.size), actual.copyOfRange(offset + length, input.size), 0f)
+        } finally {
+            JamesDspWrapper.free(separateHandle)
+            JamesDspWrapper.free(inPlaceHandle)
+        }
+    }
+
+    @Test
     fun reverbInPlaceProducesFinitePcm() {
         val handle = JamesDspWrapper.alloc(TestCallbacks)
         assertTrue(handle != 0L)

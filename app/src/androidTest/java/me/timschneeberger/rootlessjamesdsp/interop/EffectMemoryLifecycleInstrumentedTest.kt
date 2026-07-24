@@ -10,6 +10,25 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class EffectMemoryLifecycleInstrumentedTest {
     @Test
+    fun everyCrossfeedModeCanBeEnabledAndProcessed() {
+        val handle = JamesDspWrapper.alloc(TestCallbacks)
+        assertTrue(handle != 0L)
+
+        try {
+            val input = FloatArray(512) { if (it % 2 == 0) 0.25f else -0.25f }
+            val output = FloatArray(input.size)
+            for (mode in 0..5) {
+                assertTrue("Crossfeed mode $mode failed to enable", JamesDspWrapper.setCrossfeed(handle, true, mode, 0, 0))
+                JamesDspWrapper.processFloat(handle, input, output)
+                assertTrue("Crossfeed mode $mode produced non-finite output", output.all(Float::isFinite))
+                assertTrue("Crossfeed mode $mode failed to disable", JamesDspWrapper.setCrossfeed(handle, false, mode, 0, 0))
+            }
+        } finally {
+            JamesDspWrapper.free(handle)
+        }
+    }
+
+    @Test
     fun largeEffectResourcesAreAllocatedOnDemandAndReleased() {
         val handle = JamesDspWrapper.alloc(TestCallbacks)
         assertTrue(handle != 0L)

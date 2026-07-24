@@ -925,7 +925,7 @@ internal object FastAudioMath {
         val fraction = position - index
         val log2Mantissa = log2MantissaTable[index] + fraction *
             (log2MantissaTable[index + 1] - log2MantissaTable[index])
-        return ((exponentBits - 127) + log2Mantissa) * LOG2_TO_DB
+        return (((exponentBits - 127) + log2Mantissa) * LOG2_TO_DB)
             .coerceIn(DB_MIN, DB_MAX)
     }
 }

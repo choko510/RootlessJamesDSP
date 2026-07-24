@@ -1,5 +1,7 @@
 # Completed
 
+- 2026-07-24: Fixed the libjamesdsp Phase 3 review findings: guarded Crossfeed mode indexing, made LiveProg VM/code snapshots safe during realtime processing, moved Reverb/Compressor/Crossfeed loops outside the DSP mutex with quiescent resource release, validated Compressor NULL inputs, and added all-mode Crossfeed instrumentation coverage.
+- 2026-07-24: Fixed Phase 3 review findings: JNI in-place offsets now preserve the processed region, FastAudioMath clamps high power correctly, recorder shutdown waits for actual thread exit with handle stop/release fallback, transient audio I/O errors retry, and Car Audio/buffer benchmark coverage was strengthened.
 - 2026-07-24: Phase 3 made Rootless PCM processing allocation-free and in-place, precomputed Car Audio runtime settings and fast math, gated inactive meters, added realtime tracing/priority and JNI validation, aligned native build optimization, and added deterministic trace/instrumentation benchmarks.
 - 2026-07-24: Phase 2 reduced steady Rootless Native Heap Alloc by another median 10,590 KiB by lazily owning Reverb/Compander state and Crossfeed HRTF data, releasing Rootless convolver data on disable, and closing service-owned coroutine scopes; added effect allocation/release and processing regression coverage.
 - 2026-07-24: Reduced Rootless playback native allocation by about 74 MiB by lazily owning the LiveProg VM, using encoding-specific PCM buffers, and making local-engine shutdown deterministic; added Float/Short memory benchmarks and lifecycle regression coverage.

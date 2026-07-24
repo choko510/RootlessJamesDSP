@@ -11,6 +11,7 @@ import androidx.benchmark.macro.TraceSectionMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.Until
 import org.junit.Assert.fail
 import org.junit.Rule
@@ -37,11 +38,21 @@ class RootlessRuntimeBenchmark {
     @Test
     fun float1024TraceSections() = measureRuntime(PcmEncoding.Float, bufferSize = 1024)
 
-    private fun measureRuntime(encoding: PcmEncoding, bufferSize: Int = 8192) {
+    @Test
+    fun carAudioEnabledFloat8192TraceSections() = measureRuntime(
+        PcmEncoding.Float,
+        carAudioEnabled = true,
+    )
+
+    private fun measureRuntime(
+        encoding: PcmEncoding,
+        bufferSize: Int = 8192,
+        carAudioEnabled: Boolean = false,
+    ) {
         var tone: CapturableTone? = null
         benchmarkRule.measureRepeated(
             packageName = targetPackage,
-            metrics = traceMetrics,
+            metrics = buildTraceMetrics(carAudioEnabled),
             compilationMode = CompilationMode.Ignore(),
             iterations = 5,
             startupMode = null,
@@ -58,6 +69,7 @@ class RootlessRuntimeBenchmark {
                 waitForPowerToggle()
                 if (bufferSize != 8192) selectBufferSize(bufferSize)
                 if (encoding == PcmEncoding.Short) selectShortEncoding()
+                if (carAudioEnabled) enableCarAudio()
                 device.findObject(By.res(targetPackage, "power_toggle")).click()
                 confirmMediaProjection()
                 waitForRootlessService()
@@ -98,6 +110,27 @@ class RootlessRuntimeBenchmark {
         waitForPowerToggle()
     }
 
+    private fun androidx.benchmark.macro.MacrobenchmarkScope.enableCarAudio() {
+        val scrollView = device.findObject(By.res(targetPackage, "dsp_scrollview"))
+        var compressor = device.findObject(By.text(CAR_COMPRESSOR_TITLE_PATTERN))
+        repeat(6) {
+            if (compressor != null) return@repeat
+            scrollView?.swipe(Direction.DOWN, 0.8f)
+            Thread.sleep(100)
+            compressor = device.findObject(By.text(CAR_COMPRESSOR_TITLE_PATTERN))
+        }
+        checkNotNull(compressor) { "Car Audio compressor preference did not appear" }.click()
+        val switch = checkNotNull(
+            device.wait(Until.findObject(By.res(SWITCH_RESOURCE)), UI_TIMEOUT_MS),
+        ) { "Car Audio compressor switch did not appear" }
+        if (!switch.isChecked) switch.click()
+        check(device.wait(Until.findObject(By.res(SWITCH_RESOURCE)), UI_TIMEOUT_MS)?.isChecked == true) {
+            "Car Audio compressor could not be enabled"
+        }
+        device.pressBack()
+        waitForPowerToggle()
+    }
+
     private fun androidx.benchmark.macro.MacrobenchmarkScope.selectBufferSize(bufferSize: Int) {
         val settings = checkNotNull(device.wait(Until.findObject(By.res(targetPackage, "action_settings")), UI_TIMEOUT_MS)) {
             "Settings button did not appear"
@@ -126,6 +159,16 @@ class RootlessRuntimeBenchmark {
             .coerceIn(0f, 1f)
         val targetX = seekbarBounds.left + (seekbarBounds.width() * fraction).roundToInt()
         device.swipe(seekbarBounds.left + 2, seekbarBounds.centerY(), targetX, seekbarBounds.centerY(), 10)
+        val valueDeadline = System.currentTimeMillis() + UI_TIMEOUT_MS
+        var selectedValue: String? = null
+        while (System.currentTimeMillis() < valueDeadline) {
+            selectedValue = device.findObject(By.res(targetPackage, "seekbar_value"))?.text
+            if (selectedValue?.trim()?.startsWith(bufferSize.toString()) == true) break
+            Thread.sleep(50)
+        }
+        check(selectedValue?.trim()?.startsWith(bufferSize.toString()) == true) {
+            "Buffer size slider selected '$selectedValue', expected $bufferSize"
+        }
         device.pressBack()
         waitForPowerToggle()
     }
@@ -236,7 +279,8 @@ class RootlessRuntimeBenchmark {
         // The standard scenario keeps Car Audio disabled. TraceSectionMetric omits a metric
         // entirely when a section has zero occurrences, which crashes the macrobenchmark
         // result formatter; the car section remains available in the captured Perfetto trace.
-        val traceMetrics = listOf("read", "engine", "write").flatMap { section ->
+        fun buildTraceMetrics(carAudioEnabled: Boolean): List<TraceSectionMetric> =
+            (listOf("read", "engine", "write") + if (carAudioEnabled) listOf("car") else emptyList()).flatMap { section ->
             traceModes.map { (mode, label) ->
                 TraceSectionMetric("JDSP.$section", mode, "${section}_$label")
             }
@@ -244,6 +288,8 @@ class RootlessRuntimeBenchmark {
         val AUDIO_PROCESSING_PATTERN = Pattern.compile("Audio processing|オーディオ処理", Pattern.CASE_INSENSITIVE)
         val AUDIO_ENCODING_PATTERN = Pattern.compile("Audio encoding|音声エンコーディング", Pattern.CASE_INSENSITIVE)
         val PCM_SHORT_PATTERN = Pattern.compile("16-bit integer PCM|16ビット整数 PCM", Pattern.CASE_INSENSITIVE)
+        val CAR_COMPRESSOR_TITLE_PATTERN = Pattern.compile("Three-band compressor|3バンドコンプレッサー", Pattern.CASE_INSENSITIVE)
+        val SWITCH_RESOURCE = Pattern.compile(".+:id/switchWidget")
         const val BUFFER_MIN = 128
         const val BUFFER_MAX = 16384
         val SEEK_BAR_RESOURCE = Pattern.compile(".+:id/seekbar")

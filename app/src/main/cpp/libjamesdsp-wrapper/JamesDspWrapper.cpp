@@ -241,7 +241,7 @@ Java_me_timschneeberger_rootlessjamesdsp_interop_JamesDspWrapper_processInt16(JN
         auto input = env->GetShortArrayElements(inputObj, nullptr);
         if(input == nullptr)
             return;
-        dsp->processInt16Multiplexd(dsp, input + offset, input, inputLength / 2);
+        dsp->processInt16Multiplexd(dsp, input + offset, input + offset, inputLength / 2);
         env->ReleaseShortArrayElements(inputObj, input, 0);
         return;
     }
@@ -281,7 +281,7 @@ Java_me_timschneeberger_rootlessjamesdsp_interop_JamesDspWrapper_processInt32(JN
         auto input = env->GetIntArrayElements(inputObj, nullptr);
         if(input == nullptr)
             return;
-        dsp->processInt32Multiplexd(dsp, input + offset, input, inputLength / 2);
+        dsp->processInt32Multiplexd(dsp, input + offset, input + offset, inputLength / 2);
         env->ReleaseIntArrayElements(inputObj, input, 0);
         return;
     }
@@ -359,7 +359,7 @@ Java_me_timschneeberger_rootlessjamesdsp_interop_JamesDspWrapper_processFloat(JN
         auto input = env->GetFloatArrayElements(inputObj, nullptr);
         if(input == nullptr)
             return;
-        dsp->processFloatMultiplexd(dsp, input + offset, input, inputLength / 2);
+        dsp->processFloatMultiplexd(dsp, input + offset, input + offset, inputLength / 2);
         env->ReleaseFloatArrayElements(inputObj, input, 0);
         return;
     }
@@ -465,18 +465,18 @@ Java_me_timschneeberger_rootlessjamesdsp_interop_JamesDspWrapper_setCompander(JN
 {
     DECLARE_DSP_B
 
+    if(bands == nullptr)
+    {
+        LOGW("JamesDspWrapper::setCompander: Compander band pointer is NULL. Disabling compander");
+        CompressorDisable(dsp);
+        return true;
+    }
+
     if(env->GetArrayLength(bands) != 14)
     {
         LOGE("JamesDspWrapper::setCompander: Invalid compander data. 14 semicolon-separated fields expected, "
              "found %d fields instead.", env->GetArrayLength(bands));
         return false;
-    }
-
-    if(bands == nullptr)
-    {
-        LOGW("JamesDspWrapper::setCompander: Compander band pointer is NULL. Disabling compander");
-        MultimodalEqualizerDisable(dsp);
-        return true;
     }
 
     if(enable)

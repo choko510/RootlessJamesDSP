@@ -9,6 +9,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class LiveProgLifecycleInstrumentedTest {
@@ -100,6 +101,44 @@ class LiveProgLifecycleInstrumentedTest {
                 afterInvalidScriptBytes - beforeInvalidScriptBytes <= RELEASE_TOLERANCE_BYTES,
             )
             assertTrue(JamesDspWrapper.enumerateEelVariables(handle).isEmpty())
+        } finally {
+            JamesDspWrapper.free(handle)
+        }
+    }
+
+    @Test
+    fun liveProgUpdatesCanRaceWithRealtimeProcessing() {
+        val handle = JamesDspWrapper.alloc(TestCallbacks)
+        assertTrue(handle != 0L)
+
+        try {
+            val script = """
+                @init
+                gain = 0.5;
+                @sample
+                spl0 = spl0 * gain;
+                spl1 = spl1 * gain;
+            """.trimIndent()
+            assertTrue(JamesDspWrapper.setLiveprog(handle, true, "race-test", script))
+            val input = FloatArray(512) { if (it % 2 == 0) 0.25f else -0.25f }
+            val output = FloatArray(input.size)
+            val failure = AtomicReference<Throwable?>()
+            val processor = Thread {
+                try {
+                    repeat(200) {
+                        JamesDspWrapper.processFloat(handle, input, output)
+                        assertTrue(output.all(Float::isFinite))
+                    }
+                } catch (error: Throwable) {
+                    failure.set(error)
+                }
+            }
+            processor.start()
+            repeat(20) {
+                assertTrue(JamesDspWrapper.setLiveprog(handle, true, "race-test", script))
+            }
+            processor.join()
+            assertTrue("LiveProg race failed: ${failure.get()}", failure.get() == null)
         } finally {
             JamesDspWrapper.free(handle)
         }

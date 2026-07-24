@@ -93,6 +93,10 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     @Volatile
     private var recreateRecorderRequested = false
     private var recorderThread: Thread? = null
+    @Volatile
+    private var activeRecorder: AudioRecord? = null
+    @Volatile
+    private var activeTrack: AudioTrack? = null
     private lateinit var engine: JamesDspLocalEngine
     @Volatile
     private var carAudioProcessor: CarAudioProcessor? = null
@@ -550,12 +554,15 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         }
         carAudioProcessor = localCarProcessor
         carAudioTrack = track
+        activeRecorder = recorder
+        activeTrack = track
 
         // TODO Move all audio-related code to C++
         recorderThread = Thread {
             try {
                 Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                 ServiceNotificationHelper.pushServiceNotification(applicationContext, arrayOf())
+                var readErrorCount = 0
 
                 while (!isProcessorDisposing) {
                     if(recreateRecorderRequested) {
@@ -563,9 +570,7 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                         Timber.d("Recreating recorder without stopping thread...")
 
                         // Suspend track, release recorder
-                        recorder.stop()
-                        track.stop()
-                        recorder.release()
+                        releaseAudioRecord(recorder)
 
 
                         if (mediaProjection == null) {
@@ -576,7 +581,9 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
 
                         // Recreate recorder with new AudioPlaybackRecordingConfiguration
                         recorder = buildAudioRecord(encodingFormat, sampleRate, bufferSizeBytes)
+                        activeRecorder = recorder
                         Timber.d("Recorder recreated")
+                        if (isProcessorDisposing) break
                     }
 
                     // Suspend core while idle
@@ -615,9 +622,15 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                                 recorder.read(pcmBuffers.samples, 0, pcmBuffers.samples.size, AudioRecord.READ_BLOCKING)
                             }
                             if (read <= 0) {
-                                if (read < 0) throw IOException("AudioRecord.read failed: $read")
+                                if (read < 0) {
+                                    if (read == AudioRecord.ERROR_DEAD_OBJECT) {
+                                        throw IOException("AudioRecord.read failed permanently: $read")
+                                    }
+                                    readErrorCount = retryAudioIo("AudioRecord.read", read, readErrorCount)
+                                }
                                 continue
                             }
+                            readErrorCount = 0
                             val sampleCount = read - (read % 2)
                             if (sampleCount == 0) continue
                             if (localCarProcessor.requiresProcessing) {
@@ -635,9 +648,15 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                                 recorder.read(pcmBuffers.samples, 0, pcmBuffers.samples.size, AudioRecord.READ_BLOCKING)
                             }
                             if (read <= 0) {
-                                if (read < 0) throw IOException("AudioRecord.read failed: $read")
+                                if (read < 0) {
+                                    if (read == AudioRecord.ERROR_DEAD_OBJECT) {
+                                        throw IOException("AudioRecord.read failed permanently: $read")
+                                    }
+                                    readErrorCount = retryAudioIo("AudioRecord.read", read, readErrorCount)
+                                }
                                 continue
                             }
+                            readErrorCount = 0
                             val sampleCount = read - (read % 2)
                             if (sampleCount == 0) continue
                             if (localCarProcessor.requiresProcessing) {
@@ -664,15 +683,10 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                 if (carAudioTrack === track) {
                     carAudioTrack = null
                 }
-                if(recorder.state != AudioRecord.STATE_UNINITIALIZED) {
-                    recorder.stop()
-                }
-                if(track.state != AudioTrack.STATE_UNINITIALIZED) {
-                    track.stop()
-                }
-
-                recorder.release()
-                track.release()
+                releaseAudioRecord(recorder)
+                releaseAudioTrack(track)
+                if (activeRecorder === recorder) activeRecorder = null
+                if (activeTrack === track) activeTrack = null
                 if (carAudioProcessor === localCarProcessor) {
                     carAudioProcessor = null
                 }
@@ -686,11 +700,19 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
             throw IOException("Invalid stereo PCM sample count: $sampleCount")
         }
         var offset = 0
+        var retryCount = 0
         while (offset < sampleCount) {
             val written = tracedPcm("JDSP.write") {
                 track.write(samples, offset, sampleCount - offset, AudioTrack.WRITE_BLOCKING)
             }
-            if (written <= 0) throw IOException("AudioTrack.write failed: $written")
+            if (written <= 0) {
+                if (written == AudioTrack.ERROR_DEAD_OBJECT) {
+                    throw IOException("AudioTrack.write failed permanently: $written")
+                }
+                retryCount = retryAudioIo("AudioTrack.write", written, retryCount)
+                continue
+            }
+            retryCount = 0
             if ((written and 1) != 0) throw IOException("AudioTrack.write crossed stereo boundary: $written")
             offset += written
         }
@@ -701,11 +723,19 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
             throw IOException("Invalid stereo PCM sample count: $sampleCount")
         }
         var offset = 0
+        var retryCount = 0
         while (offset < sampleCount) {
             val written = tracedPcm("JDSP.write") {
                 track.write(samples, offset, sampleCount - offset, AudioTrack.WRITE_BLOCKING)
             }
-            if (written <= 0) throw IOException("AudioTrack.write failed: $written")
+            if (written <= 0) {
+                if (written == AudioTrack.ERROR_DEAD_OBJECT) {
+                    throw IOException("AudioTrack.write failed permanently: $written")
+                }
+                retryCount = retryAudioIo("AudioTrack.write", written, retryCount)
+                continue
+            }
+            retryCount = 0
             if ((written and 1) != 0) throw IOException("AudioTrack.write crossed stereo boundary: $written")
             offset += written
         }
@@ -713,12 +743,65 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
 
     // Terminate recording thread
     fun stopRecording() {
-        if (recorderThread != null) {
-            isProcessorDisposing = true
-            recorderThread!!.interrupt()
-            recorderThread!!.join(500)
-            recorderThread = null
+        val thread = recorderThread ?: return
+        isProcessorDisposing = true
+        stopAudioRecord(activeRecorder)
+        stopAudioTrack(activeTrack)
+        thread.interrupt()
+        thread.join(STOP_JOIN_TIMEOUT_MS)
+        if (thread.isAlive) {
+            // A blocking framework call can ignore interrupt(). Releasing the handles is the
+            // fallback that unblocks AudioRecord/AudioTrack; never clear recorderThread before the
+            // old thread has actually exited, otherwise a restart could create a second loop.
+            releaseAudioRecord(activeRecorder)
+            releaseAudioTrack(activeTrack)
+            thread.join()
         }
+        recorderThread = null
+        activeRecorder = null
+        activeTrack = null
+    }
+
+    private fun retryAudioIo(operation: String, errorCode: Int, retryCount: Int): Int {
+        if (retryCount >= MAX_AUDIO_IO_RETRIES) {
+            throw IOException("$operation failed after retries: $errorCode")
+        }
+        val nextRetryCount = retryCount + 1
+        Timber.w("$operation returned $errorCode; retry $nextRetryCount/$MAX_AUDIO_IO_RETRIES")
+        Thread.sleep(AUDIO_IO_RETRY_DELAY_MS)
+        return nextRetryCount
+    }
+
+    private fun stopAudioRecord(record: AudioRecord?) {
+        if (record == null) return
+        runCatching {
+            if (record.state != AudioRecord.STATE_UNINITIALIZED &&
+                record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                record.stop()
+            }
+        }
+    }
+
+    private fun releaseAudioRecord(record: AudioRecord?) {
+        if (record == null) return
+        stopAudioRecord(record)
+        runCatching { record.release() }
+    }
+
+    private fun stopAudioTrack(track: AudioTrack?) {
+        if (track == null) return
+        runCatching {
+            if (track.state != AudioTrack.STATE_UNINITIALIZED &&
+                track.playState != AudioTrack.PLAYSTATE_STOPPED) {
+                track.stop()
+            }
+        }
+    }
+
+    private fun releaseAudioTrack(track: AudioTrack?) {
+        if (track == null) return
+        stopAudioTrack(track)
+        runCatching { track.release() }
     }
 
     // Hard restart recording thread
@@ -864,6 +947,9 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         const val VOLUME_POLL_INTERVAL_MS = 200L
         const val CAR_AUDIO_IDLE_POLL_INTERVAL_MS = 1000L
         const val VOLUME_UPDATE_INTERVAL_NANOS = 200_000_000L
+        private const val STOP_JOIN_TIMEOUT_MS = 500L
+        private const val MAX_AUDIO_IO_RETRIES = 3
+        private const val AUDIO_IO_RETRY_DELAY_MS = 2L
 
         fun start(context: Context, data: Intent?) {
             try {
