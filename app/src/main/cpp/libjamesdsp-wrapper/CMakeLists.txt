@@ -12,6 +12,13 @@ add_library( # Sets the name of the library.
         ${SOURCE_FILES}
         )
 
+target_compile_options(jamesdsp-wrapper PRIVATE
+        -ffunction-sections
+        -fdata-sections
+        $<$<CONFIG:Debug>:-O2>
+        $<$<CONFIG:Release>:-O3>
+        $<$<CONFIG:RelWithDebInfo>:-O3>)
+
 
 find_library( # Sets the name of the path variable.
         log-lib

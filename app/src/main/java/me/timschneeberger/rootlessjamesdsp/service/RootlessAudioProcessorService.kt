@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.Trace
 import androidx.annotation.RequiresApi
 import androidx.core.content.getSystemService
 import androidx.core.math.MathUtils.clamp
@@ -28,6 +29,7 @@ import androidx.lifecycle.Observer
 import androidx.lifecycle.asLiveData
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import me.timschneeberger.rootlessjamesdsp.BuildConfig
 import me.timschneeberger.rootlessjamesdsp.R
 import me.timschneeberger.rootlessjamesdsp.audio.CarAudioProcessor
@@ -66,6 +68,15 @@ import org.koin.android.ext.android.inject
 import timber.log.Timber
 import java.io.IOException
 
+private inline fun <T> tracedPcm(name: String, block: () -> T): T {
+    Trace.beginSection(name)
+    return try {
+        block()
+    } finally {
+        Trace.endSection()
+    }
+}
+
 
 @RequiresApi(Build.VERSION_CODES.Q)
 class RootlessAudioProcessorService : BaseAudioProcessorService() {
@@ -79,6 +90,7 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     private var mediaProjectionStartIntent: Intent? = null
 
     // Processing
+    @Volatile
     private var recreateRecorderRequested = false
     private var recorderThread: Thread? = null
     private lateinit var engine: JamesDspLocalEngine
@@ -96,17 +108,23 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         override fun run() {
             if (isServiceDisposing) return
             val processor = carAudioProcessor
+            val settings = carAudioSettings
+            val meterVisible = preferencesVar.preferences.getBoolean(
+                getString(R.string.key_is_activity_active),
+                false,
+            )
             if (processor != null) {
+                processor.setMeterEnabled(settings.compressor.enabled && meterVisible)
                 // AudioManager volume APIs cross into the framework through Binder. Keep that
                 // work on the main/control thread; the PCM thread only reads the volatile gain.
                 val nowNanos = System.nanoTime()
-                if (nowNanos - lastVolumeUpdateNanos >= VOLUME_UPDATE_INTERVAL_NANOS) {
+                if (settings.loudness.enabled && nowNanos - lastVolumeUpdateNanos >= VOLUME_UPDATE_INTERVAL_NANOS) {
                     processor.setEffectiveOutputGainDb(
-                        determineEffectiveOutputGainDb(carAudioTrack, carAudioSettings.outputPostGainDb)
+                        determineEffectiveOutputGainDb(carAudioTrack, settings.outputPostGainDb)
                     )
                     lastVolumeUpdateNanos = nowNanos
                 }
-                if (carAudioSettings.compressor.enabled) {
+                if (settings.compressor.enabled && meterVisible) {
                     sendLocalBroadcast(Intent(Constants.ACTION_CAR_AUDIO_METER).apply {
                         putExtra(
                             Constants.EXTRA_CAR_AUDIO_GAIN_REDUCTION_DB,
@@ -118,7 +136,12 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                     })
                 }
             }
-            carAudioMeterHandler.postDelayed(this, CAR_AUDIO_METER_INTERVAL_MS)
+            val nextInterval = when {
+                settings.compressor.enabled && meterVisible -> CAR_AUDIO_METER_INTERVAL_MS
+                settings.loudness.enabled -> VOLUME_POLL_INTERVAL_MS
+                else -> CAR_AUDIO_IDLE_POLL_INTERVAL_MS
+            }
+            carAudioMeterHandler.postDelayed(this, nextInterval)
         }
     }
     private val isRunning: Boolean
@@ -129,14 +152,18 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
     private var sessionLossRetryCount = 0
 
     // Idle detection
+    @Volatile
     private var isProcessorIdle = false
+    @Volatile
     private var suspendOnIdle = false
 
     // Exclude restricted apps flag
     private var excludeRestrictedSessions = false
 
     // Termination flags
+    @Volatile
     private var isProcessorDisposing = false
+    @Volatile
     private var isServiceDisposing = false
 
     // Shared preferences
@@ -282,6 +309,7 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
 
         // Unregister database observer
         blockedApps.removeObserver(blockedAppObserver)
+        applicationScope.cancel()
 
         // Unregister receivers and release resources
         unregisterLocalReceiver(broadcastReceiver)
@@ -511,27 +539,22 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
             engine.configureStream(sampleRate.toFloat(), bufferSize, 2)
         }
 
+        val pcmBuffers = createPcmProcessingBuffers(encoding, bufferSize)
         val localSettings = CarAudioSettingsLoader.load(this)
         carAudioSettings = localSettings
         val localCarProcessor = CarAudioProcessor(sampleRate).also {
             it.update(localSettings)
-            it.prepare(bufferSize)
+            if (pcmBuffers is ShortPcmProcessingBuffers) {
+                it.prepare(bufferSize)
+            }
         }
         carAudioProcessor = localCarProcessor
         carAudioTrack = track
 
-        // Allocate all PCM and conversion buffers before entering the realtime thread. This
-        // includes the PCM16 conversion scratch used by CarAudioProcessor.
-        val floatBuffer = FloatArray(bufferSize)
-        val floatOutBuffer = FloatArray(bufferSize)
-        val floatEngineOutBuffer = FloatArray(bufferSize)
-        val shortBuffer = ShortArray(bufferSize)
-        val shortOutBuffer = ShortArray(bufferSize)
-        val shortEngineOutBuffer = ShortArray(bufferSize)
-
         // TODO Move all audio-related code to C++
         recorderThread = Thread {
             try {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                 ServiceNotificationHelper.pushServiceNotification(applicationContext, arrayOf())
 
                 while (!isProcessorDisposing) {
@@ -584,18 +607,49 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
                         track.play()
                     }
 
-                    // Choose encoding and process data
-                    if(encoding == AudioEncoding.PcmShort) {
-                        recorder.read(shortBuffer, 0, shortBuffer.size, AudioRecord.READ_BLOCKING)
-                        localCarProcessor.process(shortBuffer, shortOutBuffer)
-                        engine.processInt16(shortOutBuffer, shortEngineOutBuffer)
-                        track.write(shortEngineOutBuffer, 0, shortEngineOutBuffer.size, AudioTrack.WRITE_BLOCKING)
-                    }
-                    else {
-                        recorder.read(floatBuffer, 0, floatBuffer.size, AudioRecord.READ_BLOCKING)
-                        localCarProcessor.process(floatBuffer, floatOutBuffer)
-                        engine.processFloat(floatOutBuffer, floatEngineOutBuffer)
-                        track.write(floatEngineOutBuffer, 0, floatEngineOutBuffer.size, AudioTrack.WRITE_BLOCKING)
+                    // Choose encoding and process data. The same PCM array is reused across the
+                    // recorder, optional car processor, native engine and track.
+                    when (pcmBuffers) {
+                        is ShortPcmProcessingBuffers -> {
+                            val read = tracedPcm("JDSP.read") {
+                                recorder.read(pcmBuffers.samples, 0, pcmBuffers.samples.size, AudioRecord.READ_BLOCKING)
+                            }
+                            if (read <= 0) {
+                                if (read < 0) throw IOException("AudioRecord.read failed: $read")
+                                continue
+                            }
+                            val sampleCount = read - (read % 2)
+                            if (sampleCount == 0) continue
+                            if (localCarProcessor.requiresProcessing) {
+                                tracedPcm("JDSP.car") {
+                                    localCarProcessor.process(pcmBuffers.samples, pcmBuffers.samples, sampleCount)
+                                }
+                            }
+                            tracedPcm("JDSP.engine") {
+                                engine.processInt16(pcmBuffers.samples, pcmBuffers.samples, 0, sampleCount)
+                            }
+                            writePcm(track, pcmBuffers.samples, sampleCount)
+                        }
+                        is FloatPcmProcessingBuffers -> {
+                            val read = tracedPcm("JDSP.read") {
+                                recorder.read(pcmBuffers.samples, 0, pcmBuffers.samples.size, AudioRecord.READ_BLOCKING)
+                            }
+                            if (read <= 0) {
+                                if (read < 0) throw IOException("AudioRecord.read failed: $read")
+                                continue
+                            }
+                            val sampleCount = read - (read % 2)
+                            if (sampleCount == 0) continue
+                            if (localCarProcessor.requiresProcessing) {
+                                tracedPcm("JDSP.car") {
+                                    localCarProcessor.process(pcmBuffers.samples, pcmBuffers.samples, sampleCount)
+                                }
+                            }
+                            tracedPcm("JDSP.engine") {
+                                engine.processFloat(pcmBuffers.samples, pcmBuffers.samples, 0, sampleCount)
+                            }
+                            writePcm(track, pcmBuffers.samples, sampleCount)
+                        }
                     }
                 }
             } catch (e: IOException) {
@@ -625,6 +679,36 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
             }
         }
         recorderThread!!.start()
+    }
+
+    private fun writePcm(track: AudioTrack, samples: ShortArray, sampleCount: Int) {
+        if (sampleCount < 0 || (sampleCount and 1) != 0 || sampleCount > samples.size) {
+            throw IOException("Invalid stereo PCM sample count: $sampleCount")
+        }
+        var offset = 0
+        while (offset < sampleCount) {
+            val written = tracedPcm("JDSP.write") {
+                track.write(samples, offset, sampleCount - offset, AudioTrack.WRITE_BLOCKING)
+            }
+            if (written <= 0) throw IOException("AudioTrack.write failed: $written")
+            if ((written and 1) != 0) throw IOException("AudioTrack.write crossed stereo boundary: $written")
+            offset += written
+        }
+    }
+
+    private fun writePcm(track: AudioTrack, samples: FloatArray, sampleCount: Int) {
+        if (sampleCount < 0 || (sampleCount and 1) != 0 || sampleCount > samples.size) {
+            throw IOException("Invalid stereo PCM sample count: $sampleCount")
+        }
+        var offset = 0
+        while (offset < sampleCount) {
+            val written = tracedPcm("JDSP.write") {
+                track.write(samples, offset, sampleCount - offset, AudioTrack.WRITE_BLOCKING)
+            }
+            if (written <= 0) throw IOException("AudioTrack.write failed: $written")
+            if ((written and 1) != 0) throw IOException("AudioTrack.write crossed stereo boundary: $written")
+            offset += written
+        }
     }
 
     // Terminate recording thread
@@ -777,6 +861,8 @@ class RootlessAudioProcessorService : BaseAudioProcessorService() {
         const val EXTRA_APP_UID = "uid"
         const val EXTRA_APP_COMPAT_INTERNAL_CALL = "appCompatInternalCall"
         const val CAR_AUDIO_METER_INTERVAL_MS = 100L
+        const val VOLUME_POLL_INTERVAL_MS = 200L
+        const val CAR_AUDIO_IDLE_POLL_INTERVAL_MS = 1000L
         const val VOLUME_UPDATE_INTERVAL_NANOS = 200_000_000L
 
         fun start(context: Context, data: Intent?) {

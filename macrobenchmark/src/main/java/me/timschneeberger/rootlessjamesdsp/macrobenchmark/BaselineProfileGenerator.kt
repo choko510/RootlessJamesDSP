@@ -29,10 +29,6 @@ class BaselineProfileGenerator {
     }
 
     private companion object {
-        val targetPackage: String
-            get() = androidx.test.platform.app.InstrumentationRegistry
-                .getInstrumentation()
-                .targetContext
-                .packageName
+        const val targetPackage = BuildConfig.TARGET_PACKAGE
     }
 }

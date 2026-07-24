@@ -9,7 +9,6 @@ import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.tanh
 
@@ -153,10 +152,13 @@ object CarAudioSettingsLoader {
  */
 class CarAudioProcessor(private val sampleRate: Int) {
     @Volatile
-    private var settings = CarAudioSettings()
+    private lateinit var runtimeSettings: RuntimeCarAudioSettings
 
     @Volatile
     private var effectiveOutputGainDb = 0f
+
+    @Volatile
+    private var meterEnabled = false
 
     private var loudHighLpL = 0f
     private var loudHighLpR = 0f
@@ -202,8 +204,7 @@ class CarAudioProcessor(private val sampleRate: Int) {
     private val spatialAmbienceL2 = VariableAllPass(spatialAmbienceMaxDelay)
     private val spatialAmbienceR1 = VariableAllPass(spatialAmbienceMaxDelay)
     private val spatialAmbienceR2 = VariableAllPass(spatialAmbienceMaxDelay)
-    private var floatInputScratch = FloatArray(0)
-    private var floatOutputScratch = FloatArray(0)
+    private var floatScratch = FloatArray(0)
 
     // The car contour follows the plan's 100 Hz low shelf and 8 kHz high shelf.
     private val loudnessLow = onePoleCoefficient(100f)
@@ -244,15 +245,34 @@ class CarAudioProcessor(private val sampleRate: Int) {
     private val highR1 = Biquad.highPass(sampleRate, 2000f)
     private val highR2 = Biquad.highPass(sampleRate, 2000f)
 
-    fun update(newSettings: CarAudioSettings) {
-        settings = newSettings
+    init {
+        // Build lookup tables before the service starts its realtime thread.
+        FastAudioMath.warmUp()
+        runtimeSettings = buildRuntimeSettings(CarAudioSettings())
     }
+
+    fun update(newSettings: CarAudioSettings) {
+        runtimeSettings = buildRuntimeSettings(newSettings)
+    }
+
+    val requiresProcessing: Boolean
+        get() = runtimeSettings.requiresProcessing
 
     fun setEffectiveOutputGainDb(gainDb: Float) {
         effectiveOutputGainDb = if (gainDb.isFinite()) gainDb else 0f
     }
 
     fun getEffectiveOutputGainDb(): Float = effectiveOutputGainDb
+
+    fun setMeterEnabled(enabled: Boolean) {
+        meterEnabled = enabled
+        if (!enabled) {
+            gainReductionDb = 0f
+            lowGainReductionDb = 0f
+            midGainReductionDb = 0f
+            highGainReductionDb = 0f
+        }
+    }
 
     fun getGainReductionDb(): Float = gainReductionDb
     fun getLowGainReductionDb(): Float = lowGainReductionDb
@@ -265,27 +285,30 @@ class CarAudioProcessor(private val sampleRate: Int) {
     }
 
     fun process(input: FloatArray, output: FloatArray) {
-        val count = min(input.size, output.size)
-        val current = settings
-        val spatialMode = current.spatializer.mode.coerceIn(0, 3)
-        val spatialEnabled = current.spatializer.enabled && spatialMode != 0
-        val cabinSize = current.spatializer.cabinSize.coerceIn(0, 2)
-        val cabinProfile = cabinProfile(cabinSize)
-        if (cabinSize != spatialCabinSize) {
-            spatialCabinSize = cabinSize
-            spatialAmbienceHigh = onePoleCoefficient(cabinProfile.highCutoffHz)
+        process(input, output, min(input.size, output.size))
+    }
+
+    fun process(input: FloatArray, output: FloatArray, requestedCount: Int) {
+        val count = requestedCount.coerceIn(0, min(input.size, output.size))
+        val current = runtimeSettings
+        val spatial = current.spatial
+        val spatialEnabled = spatial.enabled
+        val updateMeter = meterEnabled
+        if (spatial.cabinSize != spatialCabinSize) {
+            spatialCabinSize = spatial.cabinSize
+            spatialAmbienceHigh = onePoleCoefficient(spatial.cabinProfile.highCutoffHz)
             resetSpatialState()
         }
         if (spatialEnabled != spatialWasEnabled) {
             resetSpatialState()
             spatialWasEnabled = spatialEnabled
         }
-        if (!current.loudness.enabled && !current.compressor.enabled && !spatialEnabled) {
+        if (!current.requiresProcessing) {
             gainReductionDb = 0f
             lowGainReductionDb = 0f
             midGainReductionDb = 0f
             highGainReductionDb = 0f
-            input.copyInto(output, 0, 0, count)
+            if (input !== output) input.copyInto(output, 0, 0, count)
             return
         }
 
@@ -308,34 +331,24 @@ class CarAudioProcessor(private val sampleRate: Int) {
                 treble = true,
             )
         } else 0f
-        val comp = effectiveCompressorSettings(current.compressor)
-        val lowAttackCoeff = timeCoefficient(comp.low.attackMs)
-        val lowReleaseCoeff = timeCoefficient(comp.low.releaseMs)
-        val midAttackCoeff = timeCoefficient(comp.mid.attackMs)
-        val midReleaseCoeff = timeCoefficient(comp.mid.releaseMs)
-        val highAttackCoeff = timeCoefficient(comp.high.attackMs)
-        val highReleaseCoeff = timeCoefficient(comp.high.releaseMs)
+        val comp = current.compressor
+        val lowAttackCoeff = comp.low.attack
+        val lowReleaseCoeff = comp.low.release
+        val midAttackCoeff = comp.mid.attack
+        val midReleaseCoeff = comp.mid.release
+        val highAttackCoeff = comp.high.attack
+        val highReleaseCoeff = comp.high.release
 
-        val spatial = current.spatializer
-        val spatialStrengthTarget = if (spatialEnabled) normalizedPercent(spatial.strength) else 0f
-        val focusTarget = if (spatialEnabled) normalizedPercent(spatial.frontFocus) else 0f
-        val envelope = if (spatialEnabled) normalizedPercent(spatial.envelopment) else 0f
-        val ambienceMix = envelope * when (spatialMode) {
-            1 -> 0.10f
-            2 -> 0.16f
-            3 -> 0.22f
-            else -> 0f
-        }
-        val midAmbienceMix = envelope * when (spatialMode) {
-            1 -> 0.06f
-            2 -> 0.10f
-            3 -> 0.15f
-            else -> 0f
-        }
-        val ambienceDelayL1 = delaySamples(cabinProfile.leftFirstDelayMs)
-        val ambienceDelayL2 = delaySamples(cabinProfile.leftSecondDelayMs)
-        val ambienceDelayR1 = delaySamples(cabinProfile.rightFirstDelayMs)
-        val ambienceDelayR2 = delaySamples(cabinProfile.rightSecondDelayMs)
+        val spatialStrengthTarget = if (spatialEnabled) spatial.strength else 0f
+        val focusTarget = if (spatialEnabled) spatial.frontFocus else 0f
+        val envelope = if (spatialEnabled) spatial.envelopment else 0f
+        val ambienceMix = spatial.ambienceMixScale * envelope
+        val midAmbienceMix = spatial.midAmbienceMixScale * envelope
+        val cabinProfile = spatial.cabinProfile
+        val ambienceDelayL1 = spatial.ambienceDelayL1
+        val ambienceDelayL2 = spatial.ambienceDelayL2
+        val ambienceDelayR1 = spatial.ambienceDelayR1
+        val ambienceDelayR2 = spatial.ambienceDelayR2
 
         var maxGainReduction = 0f
         var maxLowGainReduction = 0f
@@ -349,8 +362,8 @@ class CarAudioProcessor(private val sampleRate: Int) {
             loudnessBassDb = smoothLoudnessGain(loudnessBassDb, loudnessBassTarget)
             loudnessTrebleDb = smoothLoudnessGain(loudnessTrebleDb, loudnessTrebleTarget)
             if (loudness.enabled) {
-                val bassLinear = dbToLinear(loudnessBassDb) - 1f
-                val trebleLinear = dbToLinear(loudnessTrebleDb) - 1f
+                val bassLinear = FastAudioMath.dbToLinear(loudnessBassDb) - 1f
+                val trebleLinear = FastAudioMath.dbToLinear(loudnessTrebleDb) - 1f
                 loudLowL += loudnessLow * (left - loudLowL)
                 loudLowR += loudnessLow * (right - loudLowR)
                 // The explicit one-pole state below avoids a second filter allocation and keeps
@@ -385,27 +398,29 @@ class CarAudioProcessor(private val sampleRate: Int) {
                 compressorMidRms = smoothRms(compressorMidRms, midPower, midAttackCoeff, midReleaseCoeff)
                 compressorHighRms = smoothRms(compressorHighRms, highPower, highAttackCoeff, highReleaseCoeff)
 
-                val lowTarget = compressionGainDb(powerDb(compressorLowRms), comp.low)
-                val midTarget = compressionGainDb(powerDb(compressorMidRms), comp.mid)
-                val highTarget = compressionGainDb(powerDb(compressorHighRms), comp.high)
+                val lowTarget = compressionGainDb(FastAudioMath.powerToDb(compressorLowRms), comp.low.settings)
+                val midTarget = compressionGainDb(FastAudioMath.powerToDb(compressorMidRms), comp.mid.settings)
+                val highTarget = compressionGainDb(FastAudioMath.powerToDb(compressorHighRms), comp.high.settings)
                 compressorLowGainDb = smoothGain(compressorLowGainDb, lowTarget, lowAttackCoeff, lowReleaseCoeff)
                 compressorMidGainDb = smoothGain(compressorMidGainDb, midTarget, midAttackCoeff, midReleaseCoeff)
                 compressorHighGainDb = smoothGain(compressorHighGainDb, highTarget, highAttackCoeff, highReleaseCoeff)
 
-                maxGainReduction = max(
-                    maxGainReduction,
-                    max(
-                        max(-compressorLowGainDb, 0f),
-                        max(max(-compressorMidGainDb, 0f), max(-compressorHighGainDb, 0f)),
-                    ),
-                )
-                maxLowGainReduction = max(maxLowGainReduction, max(-compressorLowGainDb, 0f))
-                maxMidGainReduction = max(maxMidGainReduction, max(-compressorMidGainDb, 0f))
-                maxHighGainReduction = max(maxHighGainReduction, max(-compressorHighGainDb, 0f))
+                if (updateMeter) {
+                    maxGainReduction = max(
+                        maxGainReduction,
+                        max(
+                            max(-compressorLowGainDb, 0f),
+                            max(max(-compressorMidGainDb, 0f), max(-compressorHighGainDb, 0f)),
+                        ),
+                    )
+                    maxLowGainReduction = max(maxLowGainReduction, max(-compressorLowGainDb, 0f))
+                    maxMidGainReduction = max(maxMidGainReduction, max(-compressorMidGainDb, 0f))
+                    maxHighGainReduction = max(maxHighGainReduction, max(-compressorHighGainDb, 0f))
+                }
 
-                val lowGain = dbToLinear(compressorLowGainDb)
-                val midGain = dbToLinear(compressorMidGainDb)
-                val highGain = dbToLinear(compressorHighGainDb)
+                val lowGain = FastAudioMath.dbToLinear(compressorLowGainDb)
+                val midGain = FastAudioMath.dbToLinear(compressorMidGainDb)
+                val highGain = FastAudioMath.dbToLinear(compressorHighGainDb)
                 left = lowL * lowGain + midL * midGain + highL * highGain
                 right = lowR * lowGain + midR * midGain + highR * highGain
             }
@@ -424,25 +439,10 @@ class CarAudioProcessor(private val sampleRate: Int) {
                     spatialAmbienceMix,
                 )
                 val strengthCurve = spatialStrengthControl * (0.65f + 0.35f * spatialStrengthControl)
-                val widthAmount = strengthCurve * when (spatialMode) {
-                    1 -> 0.20f
-                    2 -> 0.42f
-                    3 -> 0.58f
-                    else -> 0f
-                }
+                val widthAmount = strengthCurve * spatial.widthScale
                 val punchScale = strengthCurve * (0.35f + 0.65f * spatialFocusControl)
-                val punchBodyAmount = punchScale * when (spatialMode) {
-                    1 -> 0.02f
-                    2 -> 0.035f
-                    3 -> 0.05f
-                    else -> 0f
-                }
-                val punchTransientAmount = punchScale * when (spatialMode) {
-                    1 -> 0.09f
-                    2 -> 0.16f
-                    3 -> 0.24f
-                    else -> 0f
-                }
+                val punchBodyAmount = punchScale * spatial.punchBodyScale
+                val punchTransientAmount = punchScale * spatial.punchTransientScale
                 val mid = (left + right) * 0.5f
                 val side = (left - right) * 0.5f
                 val lowSide = spatialLowSide + spatialLow * (side - spatialLowSide)
@@ -563,35 +563,118 @@ class CarAudioProcessor(private val sampleRate: Int) {
             output[index + 1] = safeLimit(right)
             index += 2
         }
-        gainReductionDb = maxGainReduction
-        lowGainReductionDb = maxLowGainReduction
-        midGainReductionDb = maxMidGainReduction
-        highGainReductionDb = maxHighGainReduction
+        if (updateMeter) {
+            gainReductionDb = maxGainReduction
+            lowGainReductionDb = maxLowGainReduction
+            midGainReductionDb = maxMidGainReduction
+            highGainReductionDb = maxHighGainReduction
+        }
         if (index < count) output[index] = safeLimit(input[index])
-        if (count < output.size) input.copyInto(output, count, count, min(input.size, output.size))
+        if (count < output.size && input !== output) input.copyInto(output, count, count, min(input.size, output.size))
     }
 
     fun process(input: ShortArray, output: ShortArray) {
-        val count = min(input.size, output.size)
+        process(input, output, min(input.size, output.size))
+    }
+
+    fun process(input: ShortArray, output: ShortArray, requestedCount: Int) {
+        val count = requestedCount.coerceIn(0, min(input.size, output.size))
         if (count == 0) return
-        if (floatInputScratch.size < count || floatOutputScratch.size < count) {
+        if (floatScratch.size < count) {
             // The service calls prepare() before starting the realtime thread. Never allocate on
             // this path: a missed preparation must fail transparently instead of causing an xrun.
-            input.copyInto(output, 0, 0, count)
+            if (input !== output) input.copyInto(output, 0, 0, count)
             return
         }
-        for (i in 0 until count) floatInputScratch[i] = input[i] / 32768f
-        process(floatInputScratch, floatOutputScratch)
+        for (i in 0 until count) floatScratch[i] = input[i] / 32768f
+        process(floatScratch, floatScratch, count)
         for (i in 0 until count) {
-            output[i] = (floatOutputScratch[i].coerceIn(-1f, 0.9999695f) * 32768f).toInt().toShort()
+            output[i] = (floatScratch[i].coerceIn(-1f, 0.9999695f) * 32768f).toInt().toShort()
         }
+        if (count < output.size && input !== output) input.copyInto(output, count, count, min(input.size, output.size))
     }
 
     private fun ensureFloatScratch(size: Int) {
-        if (floatInputScratch.size < size) {
-            floatInputScratch = FloatArray(size)
-            floatOutputScratch = FloatArray(size)
+        if (floatScratch.size < size) {
+            floatScratch = FloatArray(size)
         }
+    }
+
+    private fun buildRuntimeSettings(input: CarAudioSettings): RuntimeCarAudioSettings {
+        val compressorSettings = effectiveCompressorSettings(input.compressor)
+        val compressor = RuntimeCompressorSettings(
+            enabled = input.compressor.enabled,
+            low = RuntimeCompressorBand(
+                compressorSettings.low,
+                timeCoefficient(compressorSettings.low.attackMs),
+                timeCoefficient(compressorSettings.low.releaseMs),
+            ),
+            mid = RuntimeCompressorBand(
+                compressorSettings.mid,
+                timeCoefficient(compressorSettings.mid.attackMs),
+                timeCoefficient(compressorSettings.mid.releaseMs),
+            ),
+            high = RuntimeCompressorBand(
+                compressorSettings.high,
+                timeCoefficient(compressorSettings.high.attackMs),
+                timeCoefficient(compressorSettings.high.releaseMs),
+            ),
+        )
+
+        val spatialSettings = input.spatializer
+        val spatialMode = spatialSettings.mode.coerceIn(0, 3)
+        val spatialEnabled = spatialSettings.enabled && spatialMode != 0
+        val cabinSize = spatialSettings.cabinSize.coerceIn(0, 2)
+        val profile = cabinProfile(cabinSize)
+        var ambienceMixScale = 0f
+        var midAmbienceMixScale = 0f
+        var widthScale = 0f
+        var punchBodyScale = 0f
+        var punchTransientScale = 0f
+        when (spatialMode) {
+            1 -> {
+                ambienceMixScale = 0.10f
+                midAmbienceMixScale = 0.06f
+                widthScale = 0.20f
+                punchBodyScale = 0.02f
+                punchTransientScale = 0.09f
+            }
+            2 -> {
+                ambienceMixScale = 0.16f
+                midAmbienceMixScale = 0.10f
+                widthScale = 0.42f
+                punchBodyScale = 0.035f
+                punchTransientScale = 0.16f
+            }
+            3 -> {
+                ambienceMixScale = 0.22f
+                midAmbienceMixScale = 0.15f
+                widthScale = 0.58f
+                punchBodyScale = 0.05f
+                punchTransientScale = 0.24f
+            }
+        }
+        return RuntimeCarAudioSettings(
+            loudness = input.loudness,
+            compressor = compressor,
+            spatial = RuntimeSpatialSettings(
+                enabled = spatialEnabled,
+                strength = normalizedPercent(spatialSettings.strength),
+                frontFocus = normalizedPercent(spatialSettings.frontFocus),
+                envelopment = normalizedPercent(spatialSettings.envelopment),
+                cabinSize = cabinSize,
+                cabinProfile = profile,
+                ambienceDelayL1 = delaySamples(profile.leftFirstDelayMs),
+                ambienceDelayL2 = delaySamples(profile.leftSecondDelayMs),
+                ambienceDelayR1 = delaySamples(profile.rightFirstDelayMs),
+                ambienceDelayR2 = delaySamples(profile.rightSecondDelayMs),
+                ambienceMixScale = ambienceMixScale,
+                midAmbienceMixScale = midAmbienceMixScale,
+                widthScale = widthScale,
+                punchBodyScale = punchBodyScale,
+                punchTransientScale = punchTransientScale,
+            ),
+        )
     }
 
     private fun resetSpatialState() {
@@ -674,11 +757,6 @@ class CarAudioProcessor(private val sampleRate: Int) {
         return gainReduction + band.makeupDb.coerceIn(0f, 6f)
     }
 
-    private fun powerDb(power: Float): Float {
-        return (10.0 * ln(max(power, 1.0e-12f).toDouble()) / ln(10.0)).toFloat()
-            .coerceIn(-120f, 12f)
-    }
-
     private fun effectiveCompressorSettings(input: ThreeBandCompressorSettings): ThreeBandCompressorSettings {
         val normal = ThreeBandCompressorSettings()
         // A preset is materialized into the preference fields by the UI. Only legacy data that
@@ -687,8 +765,6 @@ class CarAudioProcessor(private val sampleRate: Int) {
         val isUntuned = input.low == normal.low && input.mid == normal.mid && input.high == normal.high
         return if (isUntuned && input.preset != 1) presetSettings(input.preset) else input
     }
-
-    private fun dbToLinear(db: Float): Float = 10f.pow(db / 20f)
 
     private fun safeLimit(value: Float): Float {
         if (!value.isFinite()) return 0f
@@ -758,6 +834,99 @@ class CarAudioProcessor(private val sampleRate: Int) {
                 if (treble) (1f / 3f) * (1f - t) else 0.5f * (1f - t)
             }
         }
+    }
+}
+
+private data class RuntimeCompressorBand(
+    val settings: CompressorBandSettings,
+    val attack: Float,
+    val release: Float,
+)
+
+private data class RuntimeCompressorSettings(
+    val enabled: Boolean,
+    val low: RuntimeCompressorBand,
+    val mid: RuntimeCompressorBand,
+    val high: RuntimeCompressorBand,
+)
+
+private data class RuntimeSpatialSettings(
+    val enabled: Boolean,
+    val strength: Float,
+    val frontFocus: Float,
+    val envelopment: Float,
+    val cabinSize: Int,
+    val cabinProfile: CabinProfile,
+    val ambienceDelayL1: Int,
+    val ambienceDelayL2: Int,
+    val ambienceDelayR1: Int,
+    val ambienceDelayR2: Int,
+    val ambienceMixScale: Float,
+    val midAmbienceMixScale: Float,
+    val widthScale: Float,
+    val punchBodyScale: Float,
+    val punchTransientScale: Float,
+)
+
+private data class RuntimeCarAudioSettings(
+    val loudness: AutoLoudnessSettings,
+    val compressor: RuntimeCompressorSettings,
+    val spatial: RuntimeSpatialSettings,
+) {
+    val requiresProcessing: Boolean
+        get() = loudness.enabled || compressor.enabled || spatial.enabled
+}
+
+/** Allocation-free approximations used by the realtime compressor and loudness paths. */
+internal object FastAudioMath {
+    private const val DB_MIN = -120f
+    private const val DB_MAX = 12f
+    private const val DB_STEPS_PER_UNIT = 16f
+    private const val LN_10_OVER_20 = 0.11512925465f
+    private const val LOG2_TO_DB = 3.01029995664f
+    private const val LOG2_MANTISSA_STEPS = 256
+    private const val LOG2_MANTISSA_SCALE = 1f / LOG2_MANTISSA_STEPS
+    private const val MIN_POWER = 1.0e-12f
+
+    private val dbLinearTable = FloatArray(((DB_MAX - DB_MIN) * DB_STEPS_PER_UNIT).toInt() + 1) {
+        exp((DB_MIN + it / DB_STEPS_PER_UNIT) * LN_10_OVER_20)
+    }
+    private val log2MantissaTable = FloatArray(LOG2_MANTISSA_STEPS + 1) {
+        (ln(1.0 + it * LOG2_MANTISSA_SCALE) / ln(2.0)).toFloat()
+    }
+
+    fun warmUp() {
+        // Accessing the tables from the service/control thread forces class initialization there.
+        dbLinearTable[0] += 0f
+        log2MantissaTable[0] += 0f
+    }
+
+    fun dbToLinear(db: Float): Float {
+        if (!db.isFinite()) return if (db < 0f) 0f else dbLinearTable.last()
+        val clamped = db.coerceIn(DB_MIN, DB_MAX)
+        val position = (clamped - DB_MIN) * DB_STEPS_PER_UNIT
+        val index = position.toInt().coerceAtMost(dbLinearTable.lastIndex)
+        if (index == dbLinearTable.lastIndex) return dbLinearTable[index]
+        val fraction = position - index
+        return dbLinearTable[index] + fraction * (dbLinearTable[index + 1] - dbLinearTable[index])
+    }
+
+    fun powerToDb(power: Float): Float {
+        if (!power.isFinite() || power <= MIN_POWER) return -120f
+        val bits = power.toRawBits()
+        val exponentBits = (bits ushr 23) and 0xff
+        if (exponentBits == 0) {
+            return (10.0 * ln(power.toDouble()) / ln(10.0)).toFloat().coerceIn(DB_MIN, DB_MAX)
+        }
+
+        val mantissa = (bits and 0x7fffff) * (1f / 0x800000)
+        val position = mantissa * LOG2_MANTISSA_STEPS
+        val index = position.toInt().coerceAtMost(LOG2_MANTISSA_STEPS - 1)
+        val fraction = position - index
+        val log2Mantissa = log2MantissaTable[index] + fraction *
+            (log2MantissaTable[index + 1] - log2MantissaTable[index])
+        return ((exponentBits - 127) + log2Mantissa) * LOG2_TO_DB
+            .coerceIn(DB_MIN, DB_MAX)
     }
 }
 
