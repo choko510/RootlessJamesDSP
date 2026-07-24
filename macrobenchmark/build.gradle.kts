@@ -22,9 +22,18 @@ android {
     productFlavors {
         create("fdroid") { dimension = "dependencies" }
         create("full") { dimension = "dependencies" }
-        create("rootless") { dimension = "version" }
-        create("root") { dimension = "version" }
-        create("plugin") { dimension = "version" }
+        create("rootless") {
+            dimension = "version"
+            buildConfigField("String", "TARGET_PACKAGE", "\"me.timschneeberger.rootlessjamesdsp\"")
+        }
+        create("root") {
+            dimension = "version"
+            buildConfigField("String", "TARGET_PACKAGE", "\"james.dsp\"")
+        }
+        create("plugin") {
+            dimension = "version"
+            buildConfigField("String", "TARGET_PACKAGE", "\"me.timschneeberger.rootlessjamesdsp\"")
+        }
     }
 
     compileOptions {

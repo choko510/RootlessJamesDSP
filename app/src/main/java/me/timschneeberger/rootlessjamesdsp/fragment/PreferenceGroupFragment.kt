@@ -93,7 +93,10 @@ class PreferenceGroupFragment : PreferenceFragmentCompat(), KoinComponent {
         preferenceManager.sharedPreferencesMode = Context.MODE_MULTI_PROCESS
         addPreferencesFromResource(args.getInt(BUNDLE_XML_RES))
 
-        requireContext().registerLocalReceiver(receiver, IntentFilter(Constants.ACTION_PRESET_LOADED))
+        requireContext().registerLocalReceiver(receiver, IntentFilter().apply {
+            addAction(Constants.ACTION_PRESET_LOADED)
+            addAction(Constants.ACTION_CAR_AUDIO_METER)
+        })
 
         when(args.getInt(BUNDLE_XML_RES)) {
             R.xml.dsp_compander_preferences -> {

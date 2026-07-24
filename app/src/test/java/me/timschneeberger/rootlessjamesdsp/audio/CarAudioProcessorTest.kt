@@ -4,9 +4,53 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.sqrt
 
 class CarAudioProcessorTest {
+    @Test
+    fun fastDbToLinearStaysWithinReferenceTolerance() {
+        for (db in -120..12) {
+            val expected = Math.pow(10.0, db / 20.0).toFloat()
+            val actual = FastAudioMath.dbToLinear(db.toFloat())
+            val relativeError = if (expected == 0f) 0f else abs(actual - expected) / expected
+            assertTrue("db=$db expected=$expected actual=$actual", relativeError <= 0.001f)
+        }
+    }
+
+    @Test
+    fun fastPowerToDbStaysWithinReferenceTolerance() {
+        val powers = floatArrayOf(1.0e-12f, 1.0e-9f, 1.0e-6f, 0.001f, 0.01f, 0.1f, 0.5f, 1f, 2f, 4f, 10f, 100f)
+        for (power in powers) {
+            val expected = (10.0 * ln(power.toDouble()) / ln(10.0)).toFloat()
+            assertEquals("power=$power", expected.coerceIn(-120f, 12f), FastAudioMath.powerToDb(power), 0.01f)
+        }
+    }
+
+    @Test
+    fun shortInPlaceMatchesSeparateArrayWithinOneLsb() {
+        val settings = CarAudioSettings(
+            loudness = AutoLoudnessSettings(enabled = true),
+            spatializer = CarSpatializerSettings(enabled = true, mode = 2, strength = 60f, envelopment = 30f),
+        )
+        val separateProcessor = CarAudioProcessor(48_000).also {
+            it.update(settings)
+            it.prepare(1024)
+        }
+        val inPlaceProcessor = CarAudioProcessor(48_000).also {
+            it.update(settings)
+            it.prepare(1024)
+        }
+        val input = ShortArray(1024) { index -> ((index % 97) * 311 - 15_000).toShort() }
+        val expected = ShortArray(input.size)
+        separateProcessor.process(input, expected)
+        val actual = input.copyOf()
+        inPlaceProcessor.process(actual, actual)
+        for (i in actual.indices) {
+            assertTrue("sample=$i expected=${expected[i]} actual=${actual[i]}", kotlin.math.abs(expected[i] - actual[i]) <= 1)
+        }
+    }
+
     @Test
     fun loudnessCurveHasQuietMidAndLoudPoints() {
         assertEquals(1f, CarAudioProcessor.loudnessStrength(-30f, -30f, -18f, -6f, false), 0.001f)

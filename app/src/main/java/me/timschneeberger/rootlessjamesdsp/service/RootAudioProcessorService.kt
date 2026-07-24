@@ -14,6 +14,7 @@ import androidx.lifecycle.asLiveData
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.timschneeberger.rootlessjamesdsp.BuildConfig
@@ -175,6 +176,9 @@ class RootAudioProcessorService : BaseAudioProcessorService(), KoinComponent,
 
         // Unregister database observer
         blockedApps.removeObserver(blockedAppObserver)
+        applicationScope.cancel()
+        sessionDumpManager?.destroy()
+        sessionDumpManager = null
 
         // Notify app about service termination and unregister
         sendLocalBroadcast(Intent(Constants.ACTION_SERVICE_STOPPED))
